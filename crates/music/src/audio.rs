@@ -391,26 +391,33 @@ pub struct Trimmed<I> {
     body: Option<u64>,
     emitted: u64,
     primed: bool,
-    lane: u64,
+    rate: u64,
+    channels: u64,
 }
 
 impl<I: Source> Trimmed<I> {
     pub fn new(input: I, skip: Duration, take: Option<Duration>) -> Self {
-        let lane = (input.sample_rate().get() as u64) * (input.channels().get() as u64);
-        let samples = |span: Duration| (span.as_secs_f64() * lane as f64).round() as u64;
+        let rate = input.sample_rate().get() as u64;
+        let channels = input.channels().get() as u64;
 
         Self {
-            head: samples(skip),
-            body: take.map(samples),
+            head: whole_frames(skip, rate, channels),
+            body: take.map(|take| whole_frames(take, rate, channels)),
             emitted: 0,
             primed: false,
-            lane,
+            rate,
+            channels,
             input,
         }
     }
 
     fn offset(&self) -> Duration {
-        Duration::from_secs_f64(self.head as f64 / self.lane as f64)
+        self.playing_time(self.head)
+    }
+
+    /// How long `samples` play for.
+    fn playing_time(&self, samples: u64) -> Duration {
+        Duration::from_secs_f64(samples as f64 / (self.rate * self.channels) as f64)
     }
 }
 
@@ -449,7 +456,7 @@ impl<I: Source> Source for Trimmed<I> {
 
     fn total_duration(&self) -> Option<Duration> {
         match self.body {
-            Some(body) => Some(Duration::from_secs_f64(body as f64 / self.lane as f64)),
+            Some(body) => Some(self.playing_time(body)),
             None => self
                 .input
                 .total_duration()
@@ -460,7 +467,7 @@ impl<I: Source> Source for Trimmed<I> {
     fn try_seek(&mut self, position: Duration) -> Result<(), SeekError> {
         self.input.try_seek(position + self.offset())?;
         self.primed = true;
-        self.emitted = (position.as_secs_f64() * self.lane as f64).round() as u64;
+        self.emitted = whole_frames(position, self.rate, self.channels);
         Ok(())
     }
 }
@@ -500,6 +507,12 @@ pub fn missing_bridge() -> Option<Server> {
 #[cfg(not(target_os = "linux"))]
 pub fn missing_bridge() -> Option<Server> {
     None
+}
+
+/// The samples `span` covers at `rate` frames a second, rounded to whole frames, so a cut never
+/// lands between the channels of one frame and swaps them for the rest of the track.
+fn whole_frames(span: Duration, rate: u64, channels: u64) -> u64 {
+    (span.as_secs_f64() * rate as f64).round() as u64 * channels
 }
 
 fn ident(device: &cpal::Device) -> String {

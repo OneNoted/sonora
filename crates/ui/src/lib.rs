@@ -1,11 +1,11 @@
 mod artwork;
+mod badge;
 mod button;
 mod card;
 mod checkbox;
 mod controls;
 mod deck;
 mod drag;
-mod explicit;
 mod filters;
 mod form;
 mod glass;
@@ -49,6 +49,7 @@ mod view;
 mod visualizer;
 
 pub use artwork::{Artwork, Avatar, artwork_usage, cover_palette};
+pub use badge::Badge;
 pub use button::{Button, SMALL_INSET};
 pub use card::CARD_GROUP;
 pub use card::Card;
@@ -58,7 +59,6 @@ pub use controls::WindowControls;
 pub use controls::WindowFrame;
 pub use deck::Deck;
 pub use drag::{Edge, drop_gap, drop_marker};
-pub use explicit::ExplicitBadge;
 pub use filters::{
     Filter, FilterChange, FlagAxis, RangeAxis, RangeScrubber, RangeState, SortAxis, Unit,
 };

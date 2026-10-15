@@ -776,6 +776,7 @@ impl Aside {
         )
         .tint(title)
         .when(track.explicit, Card::explicit)
+        .when(track.ai, |card| card.badge(crate::shared::ai_badge()))
         .play(
             playing,
             cx.listener(move |this, _, _, cx| {

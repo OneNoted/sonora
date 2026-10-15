@@ -406,6 +406,7 @@ impl TrackSource {
             track.name.clone(),
             color,
             track.explicit,
+            track.ai,
             None,
             self.liked_button(cell, track, cx),
         )

@@ -411,6 +411,7 @@ impl SearchView {
                     .tint(tint)
                     .meta(meta)
                     .when(track.explicit, |card| card.explicit())
+                    .when(track.ai, |card| card.badge(crate::shared::ai_badge()))
                     .trailing(
                         div()
                             .flex_none()

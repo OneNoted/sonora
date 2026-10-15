@@ -213,6 +213,7 @@ fn album(hit: AlbumHit) -> Option<Album> {
         label: String::new(),
         copyrights: Vec::new(),
         added_at: None,
+        ai: false,
     })
 }
 

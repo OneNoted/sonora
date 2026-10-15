@@ -76,6 +76,11 @@ pub fn unwrap(value: &Value) -> &Value {
         .unwrap_or(value)
 }
 
+/// The boolean under `key`, false when it is missing.
+pub fn flag(value: &Value, key: &str) -> bool {
+    value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
 /// The `resources.tidal.com` url of an image uuid at a square size. A field that already holds
 /// a url is passed through as it is.
 pub fn image(uuid: Option<&str>, size: u32) -> Option<String> {
@@ -130,10 +135,8 @@ pub fn track(wrapper: &Value) -> Option<Track> {
         added_by: None,
         playcount: None,
         popularity: count(value, "popularity").unwrap_or(0),
-        explicit: value
-            .get("explicit")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        explicit: flag(value, "explicit"),
+        ai: flag(value, "ai"),
         track_number: count(value, "trackNumber").unwrap_or(0),
         disc_number: count(value, "volumeNumber").unwrap_or(1),
         tags: Vec::new(),
@@ -179,6 +182,7 @@ pub fn album(wrapper: &Value) -> Option<Album> {
             .map(|copyright| vec![copyright.to_owned()])
             .unwrap_or_default(),
         added_at: added(wrapper),
+        ai: flag(value, "ai"),
     })
 }
 

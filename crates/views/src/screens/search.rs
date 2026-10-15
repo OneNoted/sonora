@@ -870,6 +870,7 @@ fn album_of(hit: &AlbumHit, cx: &App) -> Album {
             label: String::new(),
             copyrights: Vec::new(),
             added_at: None,
+            ai: false,
         })
 }
 

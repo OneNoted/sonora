@@ -179,6 +179,7 @@ fn album_from(uri: &str, album: &AlbumMessage) -> Album {
             })
             .collect(),
         added_at: None,
+        ai: false,
     }
 }
 

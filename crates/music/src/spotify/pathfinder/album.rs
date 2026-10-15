@@ -228,6 +228,7 @@ fn album_from(album: &PathAlbum) -> Album {
             })
             .collect(),
         added_at: None,
+        ai: false,
     }
 }
 
@@ -259,6 +260,7 @@ fn track_from(track: PathTrack, album: &Album) -> Result<Track> {
         playcount,
         popularity: 0,
         explicit: track.content_rating.label == "EXPLICIT",
+        ai: false,
         track_number: track.track_number,
         disc_number: track.disc_number,
         tags: Vec::new(),
@@ -378,6 +380,7 @@ mod tests {
             label: String::new(),
             copyrights: Vec::new(),
             added_at: None,
+            ai: false,
         };
         let track = track_from(track, &album).unwrap();
         assert_eq!(track.id.as_deref(), Some("base62id"));

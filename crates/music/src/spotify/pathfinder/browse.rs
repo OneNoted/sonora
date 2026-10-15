@@ -369,6 +369,7 @@ fn item(item: Item) -> Option<GenreItem> {
                 label: String::new(),
                 copyrights: Vec::new(),
                 added_at: None,
+                ai: false,
             }))
         }
         Entity::Artist(artist) => Some(GenreItem::Artist(SavedArtist {

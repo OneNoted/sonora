@@ -257,6 +257,7 @@ fn album(release: Release, artist: &ArtistRef) -> Album {
             .map(|copyright| copyright.text)
             .collect(),
         added_at: None,
+        ai: false,
     }
 }
 

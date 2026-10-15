@@ -639,6 +639,7 @@ mod tests {
             playcount: None,
             popularity: 50,
             explicit: false,
+            ai: false,
             track_number: 1,
             disc_number: 1,
             tags: Vec::new(),

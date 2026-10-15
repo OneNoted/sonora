@@ -793,6 +793,7 @@ pub fn album(value: &Resource) -> Option<Album> {
         label: text(&attributes.record_label).unwrap_or_default(),
         copyrights: text(&attributes.copyright).into_iter().collect(),
         added_at: moment(attributes.date_added.as_str()),
+        ai: false,
     })
 }
 
@@ -1056,6 +1057,7 @@ fn song_as(value: &Resource, id: String) -> Option<Track> {
         playcount: None,
         popularity: 0,
         explicit: attributes.content_rating.as_str() == Some("explicit"),
+        ai: false,
         track_number: number(&attributes.track_number),
         disc_number: number(&attributes.disc_number),
         tags: attributes

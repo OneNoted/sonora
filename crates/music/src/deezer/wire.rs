@@ -228,6 +228,7 @@ pub fn track(value: &Value) -> Option<Track> {
             .map(|rank| (rank / 10_000).min(100) as u32)
             .unwrap_or(0),
         explicit: truthy(value, &["explicit_lyrics", "EXPLICIT_LYRICS"]),
+        ai: false,
         track_number: number(value, &["TRACK_NUMBER", "track_position"]).unwrap_or(0) as u32,
         disc_number: number(value, &["DISK_NUMBER"]).unwrap_or(1) as u32,
         tags: Vec::new(),
@@ -288,6 +289,7 @@ pub fn album(value: &Value) -> Option<Album> {
             .to_owned(),
         copyrights: Vec::new(),
         added_at: when(value, &["ADDED_AT", "time_add", "DATE_ADD"]),
+        ai: false,
     })
 }
 

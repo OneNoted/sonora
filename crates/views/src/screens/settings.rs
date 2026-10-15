@@ -175,6 +175,7 @@ enum Slot {
     Gapless,
     Sleep,
     StayAwake,
+    HideAi,
     Widevine,
     Equalizer,
     EqualizerPreset,
@@ -619,6 +620,7 @@ impl SettingsView {
                     Slot::Gapless,
                     Slot::Sleep,
                     Slot::StayAwake,
+                    Slot::HideAi,
                 ];
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
@@ -784,6 +786,7 @@ impl SettingsView {
             Slot::Gapless => (t!("settings-gapless"), t!("settings-gapless-detail")),
             Slot::Sleep => (t!("settings-sleep"), t!("settings-sleep-detail")),
             Slot::StayAwake => (t!("settings-stay-awake"), t!("settings-stay-awake-detail")),
+            Slot::HideAi => (t!("settings-hide-ai"), t!("settings-hide-ai-detail")),
             Slot::Widevine => {
                 let (detail, _) = widevine_copy(self.drm.read(cx).state());
                 (t!("settings-widevine"), i18n::lookup(detail, None))
@@ -1000,6 +1003,7 @@ impl SettingsView {
             Slot::Gapless => self.gapless_row(cx).element,
             Slot::Sleep => self.sleep_row(cx).element,
             Slot::StayAwake => self.stay_awake_row(cx).element,
+            Slot::HideAi => self.hide_ai_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
             Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
@@ -2980,6 +2984,26 @@ impl SettingsView {
             theme.muted_foreground,
             theme.text(Text::Small),
             picker.into_any_element(),
+        )
+    }
+
+    fn hide_ai_row(&self, cx: &mut Context<Self>) -> Setting {
+        let theme = *cx.theme();
+        let muted = theme.muted_foreground;
+        let small = theme.text(Text::Small);
+        let on = self.settings.read(cx).hide_ai();
+
+        self.row(
+            t!("settings-hide-ai"),
+            t!("settings-hide-ai-detail"),
+            muted,
+            small,
+            Switch::new("hide-ai", on)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.settings
+                        .update(cx, |settings, cx| settings.set_hide_ai(!on, cx));
+                }))
+                .into_any_element(),
         )
     }
 

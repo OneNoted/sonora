@@ -290,6 +290,8 @@ struct Values {
     artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
     prefer_local_lyrics: bool,
+    /// Leaves music its provider labels as AI-generated out of search, home and radio.
+    hide_ai: bool,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     local_lyrics_offered: bool,
@@ -447,6 +449,7 @@ impl Default for Values {
             artwork_for_local_files: true,
             lyrics_for_local_files: true,
             prefer_local_lyrics: false,
+            hide_ai: false,
             local_lyrics_offered: false,
             lyrics_providers: [
                 LOCAL,
@@ -823,6 +826,10 @@ impl AppSettings {
 
     pub fn prefer_local_lyrics(&self) -> bool {
         self.values.prefer_local_lyrics
+    }
+
+    pub fn hide_ai(&self) -> bool {
+        self.values.hide_ai
     }
 
     pub fn lyrics_providers(&self) -> &[String] {
@@ -1227,6 +1234,11 @@ impl AppSettings {
 
     pub fn set_prefer_local_lyrics(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.prefer_local_lyrics = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_hide_ai(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        self.values.hide_ai = hidden;
         self.schedule_save(cx);
     }
 

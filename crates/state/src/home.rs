@@ -6,7 +6,10 @@ use std::time::Duration;
 use gpui::{App, Context, Entity, Task};
 use music::{GenreItem, GenreSection, HomeFeed, MusicApi, Track};
 
-use crate::{Io, Library, LibraryPart, LibraryState, Network, Session, SessionEvent, Shelf, join};
+use crate::{
+    AppSettings, Io, Library, LibraryPart, LibraryState, Network, Session, SessionEvent, Shelf,
+    join,
+};
 
 const GROUP_SIZE: usize = 10;
 const LIMIT: usize = GROUP_SIZE * 3;
@@ -39,7 +42,13 @@ pub struct Home {
     /// picks.
     quick_picks: Rc<Vec<GenreItem>>,
     picks_seed: u64,
+    /// The provider's shelves as they came.
+    shelves: Rc<Vec<GenreSection>>,
+    /// What the page draws of `shelves`, which leaves out music labelled as AI-generated while
+    /// the listener hides it.
     sections: Rc<Vec<GenreSection>>,
+    /// Whether the listener hides music labelled as AI-generated, as of the last settings read.
+    hide_ai: bool,
     feeding: bool,
     /// Why the last fetch brought nothing, kept until a lot lands.
     error: Option<String>,
@@ -59,6 +68,7 @@ impl Home {
     pub fn new(
         library: Entity<Library>,
         session: Entity<Session>,
+        settings: Entity<AppSettings>,
         io: Io,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -80,6 +90,18 @@ impl Home {
         .detach();
 
         cx.observe(&library, |this, _, cx| this.mix(cx)).detach();
+        // Hiding AI music takes effect on the page already drawn.
+        cx.observe(&settings, |this, settings, cx| {
+            let hide_ai = settings.read(cx).hide_ai();
+            if hide_ai != this.hide_ai {
+                this.hide_ai = hide_ai;
+                this.sections = this.shown();
+                this.merge();
+                cx.notify();
+            }
+        })
+        .detach();
+        let hide_ai = settings.read(cx).hide_ai();
         // A restore that ends offline sends no event of its own, and Quick picks wait for it.
         cx.observe(&session, |this, _, cx| {
             this.mix(cx);
@@ -95,7 +117,9 @@ impl Home {
             picks: Rc::new(Vec::new()),
             quick_picks: Rc::new(Vec::new()),
             picks_seed,
+            shelves: Rc::new(Vec::new()),
             sections: Rc::new(Vec::new()),
+            hide_ai,
             feeding: false,
             error: None,
             failures: 0,
@@ -161,6 +185,7 @@ impl Home {
         self.recent = Rc::new(Vec::new());
         self.picks = Rc::new(Vec::new());
         self.quick_picks = Rc::new(Vec::new());
+        self.shelves = Rc::new(Vec::new());
         self.sections = Rc::new(Vec::new());
         self.feeding = false;
         self.error = None;
@@ -276,14 +301,46 @@ impl Home {
             self.picks = Rc::new(quick_picks);
         }
         self.merge();
-        self.sections = Rc::new(pruned(&feed.sections));
+        self.shelves = Rc::new(pruned(&feed.sections));
+        self.sections = self.shown();
         self.name_playlists(feed.sections, cx);
+    }
+
+    /// What the page draws of the shelves: all of them, or without music labelled as
+    /// AI-generated while the listener hides it, dropping a shelf that is left empty.
+    fn shown(&self) -> Rc<Vec<GenreSection>> {
+        if !self.hide_ai {
+            return self.shelves.clone();
+        }
+        Rc::new(
+            self.shelves
+                .iter()
+                .filter_map(|section| {
+                    let items: Vec<GenreItem> = section
+                        .items
+                        .iter()
+                        .filter(|item| !generated(item))
+                        .cloned()
+                        .collect();
+                    (!items.is_empty()).then(|| GenreSection {
+                        title: section.title.clone(),
+                        items,
+                    })
+                })
+                .collect(),
+        )
     }
 
     /// Rebuilds what the page draws as Quick picks: the recent items, then the picks that are
     /// not among them already, up to `PICKS_LIMIT`.
     fn merge(&mut self) {
-        let mut quick_picks = self.recent.as_ref().clone();
+        let hide_ai = self.hide_ai;
+        let mut quick_picks: Vec<GenreItem> = self
+            .recent
+            .iter()
+            .filter(|item| !(hide_ai && generated(item)))
+            .cloned()
+            .collect();
         let played: HashSet<&str> = self
             .recent
             .iter()
@@ -297,6 +354,7 @@ impl Home {
             .picks
             .iter()
             .filter(|track| track.id.as_deref().is_none_or(|id| !played.contains(id)))
+            .filter(|track| !(hide_ai && track.ai))
             .take(room)
             .cloned()
             .map(GenreItem::Track)
@@ -359,7 +417,8 @@ impl Home {
             };
 
             this.update(cx, |this, cx| {
-                this.sections = Rc::new(named);
+                this.shelves = Rc::new(named);
+                this.sections = this.shown();
                 cx.notify();
             })
             .ok();
@@ -405,6 +464,15 @@ fn blank(item: &GenreItem) -> bool {
     match item {
         GenreItem::Playlist(playlist) => playlist.name.is_empty(),
         _ => false,
+    }
+}
+
+/// Whether a card is music its provider labels as generated by AI.
+fn generated(item: &GenreItem) -> bool {
+    match item {
+        GenreItem::Track(track) => track.ai,
+        GenreItem::Album(album) => album.ai,
+        GenreItem::Playlist(_) | GenreItem::Genre(_) | GenreItem::Artist(_) => false,
     }
 }
 

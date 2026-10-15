@@ -24,6 +24,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Sonora tells you when a library scan you started has finished.
 - Tidal as a provider: sign in with a code on link.tidal.com, then play your favorites,
   playlists, mixes and search in up to 24-bit FLAC, whatever your plan includes.
+- Songs and albums the service labels as made by AI carry an AI mark, the way explicit ones
+  carry an E. Turn on Hide AI-generated music in Playback settings to leave them out of search,
+  home and radio. Tidal is the first service that labels them.
 
 ### Changed
 

@@ -48,6 +48,30 @@ impl Volume {
     }
 }
 
+/// The loudest sample any output sent its device since the meter was last read, after the
+/// volume and before the clamp an integer device gets, so an over shows however the device
+/// takes it. Every output shares one.
+#[derive(Clone, Debug, Default)]
+pub struct Meter(Arc<AtomicU32>);
+
+impl Meter {
+    /// The loudest absolute sample since the last call, as a linear amplitude, and a fresh
+    /// start for the next one.
+    pub fn take(&self) -> f32 {
+        f32::from_bits(self.0.swap(0, Ordering::Relaxed))
+    }
+
+    /// Keeps `sample` if it is the loudest yet. A finite non-negative `f32` orders like its
+    /// bits, so the maximum is kept on the bits; NaN would sort above infinity and is left out.
+    fn record(&self, sample: f32) {
+        let bits = sample.abs().to_bits();
+        // A plain load first, since a new loudest sample is rare once the meter has warmed up.
+        if sample.is_finite() && bits > self.0.load(Ordering::Relaxed) {
+            self.0.fetch_max(bits, Ordering::Relaxed);
+        }
+    }
+}
+
 /// The rate and channel count of what one player is playing, published by each chunk as it
 /// yields its first sample. The queue's own answer depends on how the previous chunk ended, so
 /// the chain follows this instead. Zero means no chunk has played yet.
@@ -128,6 +152,7 @@ pub struct Chain {
     pub volume: Volume,
     pub equalizer: Equalizer,
     pub spectrum: Spectrum,
+    pub meter: Meter,
 }
 
 /// One open stream on an output device, with the mixer the engines' chains play into.
@@ -346,8 +371,8 @@ impl Output {
 }
 
 /// A player's queue run through its `Chain`: the equalizer filters it and the volume ramps it,
-/// then the tap hears it, and an integer device gets it held within full scale. One frame count
-/// places every sample for all of them.
+/// then the tap and the meter hear it, and an integer device gets it held within full scale.
+/// One frame count places every sample for all of them.
 pub(crate) struct Chained<I> {
     input: I,
     frames: Frames,
@@ -359,8 +384,9 @@ pub(crate) struct Chained<I> {
     /// Whether the tap hears the samples from before the gain. It is read once per frame so
     /// every channel of a frame agrees.
     unscaled: bool,
+    meter: Meter,
     /// Whether the output is held within full scale, for a device whose integer samples would
-    /// wrap. The tap hears the sample before the clamp, so a meter can still see the over.
+    /// wrap. The tap and the meter hear the sample before the clamp, so they still see the over.
     clamped: bool,
 
     current: f32,
@@ -381,6 +407,7 @@ impl<I: Source> Chained<I> {
             volume: chain.volume.clone(),
             tap: chain.spectrum.attach(),
             unscaled: false,
+            meter: chain.meter.clone(),
             clamped,
             current: gain,
             target: gain,
@@ -442,6 +469,7 @@ impl<I: Source> Iterator for Chained<I> {
             false => output,
         };
         self.tap.push(heard);
+        self.meter.record(output);
 
         Some(match self.clamped {
             true => output.clamp(-1., FULL_SCALE),

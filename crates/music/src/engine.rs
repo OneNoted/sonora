@@ -305,12 +305,11 @@ async fn engine_loop<F: Fetch>(
 ) {
     let (cue, mut written) = Cue::new();
     let (changed, mut gone) = unbounded_channel();
-    // The user's gain, the shared equalizer and the spectrum tap: what every engine hands the
-    // output. A track's own loudness gain is applied as it is decoded, in `Playing`.
     let chain = Chain {
         volume: Volume::new(config.gain),
         equalizer: config.equalizer.clone(),
         spectrum,
+        meter: config.meter.clone(),
     };
     let (jobs, job_rx) = channel::<Job<F>>();
     let (joins, mut joined) = unbounded_channel::<Joined>();

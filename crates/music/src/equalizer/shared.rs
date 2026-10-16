@@ -102,6 +102,12 @@ impl EqualizerWriter {
         &self.curve
     }
 
+    /// The preamp the curve resolves to in decibels, as published to the outputs, so an
+    /// automatic one is not worked out again.
+    pub fn preamp_db(&self) -> f64 {
+        f64::from_bits(self.shared.preamp.load(Ordering::Relaxed))
+    }
+
     pub fn set_enabled(&mut self, enabled: bool) {
         if enabled == self.enabled {
             return;

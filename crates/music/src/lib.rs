@@ -41,7 +41,7 @@ use time::format_description::well_known::Iso8601;
 use time::parsing::Parsed;
 use time::{Month, OffsetDateTime};
 
-pub use audio::{Server as SoundServer, failing as output_failing, missing_bridge};
+pub use audio::{Meter, Server as SoundServer, failing as output_failing, missing_bridge};
 pub use equalizer::Equalizer;
 pub use models::{
     Album, AlbumCatalogue, AlbumDetail, Artist, ArtistCatalogue, ArtistProfile, ArtistRef,
@@ -343,6 +343,8 @@ pub struct PlaybackConfig {
     pub position_interval: Duration,
     pub gain: f32,
     pub equalizer: Equalizer,
+    /// Shared like `equalizer`: every output the engine opens reports its loudest sample here.
+    pub meter: Meter,
 }
 
 /// What an engine reports back. `Playing` and `Seeked` mean audio from `at` is reaching the

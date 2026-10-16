@@ -453,7 +453,7 @@ mod tests {
     use rodio::queue::SourcesQueueOutput;
 
     use super::*;
-    use crate::audio::{Chain, Chained, Frames, Volume};
+    use crate::audio::{Chain, Chained, Frames, Meter, Volume};
     use crate::equalizer::{Curve, EqualizerWriter};
     use crate::spectrum::Spectrum;
 
@@ -603,6 +603,7 @@ mod tests {
             volume: Volume::new(0.5),
             equalizer: writer.reader(),
             spectrum: Spectrum::default(),
+            meter: Meter::default(),
         };
         let chained = Chained::new(queue, &chain, format, false);
         let right: Vec<f32> = chained.skip(3).take(4_096).skip(1).step_by(2).collect();

@@ -608,6 +608,10 @@ impl Root {
         self.screens
             .home
             .update(cx, |view, cx| view.set_visible(home, cx));
+        let equalizer = matches!(destination, Destination::Equalizer);
+        self.screens
+            .equalizer
+            .update(cx, |view, cx| view.set_visible(equalizer, cx));
         if let Destination::Fullscreen = destination {
             self.view = RootView::Fullscreen;
             self.announce_fullscreen(true, cx);

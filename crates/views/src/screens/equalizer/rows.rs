@@ -1,5 +1,7 @@
 use gpui::prelude::*;
-use gpui::{AnyElement, App, Context, Entity, Focusable as _, SharedString, Window, div};
+use gpui::{
+    AnyElement, App, Context, Entity, Focusable as _, MouseDownEvent, SharedString, Window, div,
+};
 use i18n::t;
 use music::equalizer::{
     Curve, FREQUENCY_RANGE, Filter, GAIN_RANGE, Invalid, Kind, MAX_FILTERS, OCTAVES_RANGE,
@@ -36,7 +38,7 @@ const KINDS: [&str; MAX_FILTERS] = [
 /// How wide the kind picker's column is, in cover sizes, so the fields line up in every row.
 const KIND: f32 = 0.75;
 /// The new filter Add puts in: flat, so adding one changes nothing until it is shaped.
-const NEW_FILTER: (Kind, f64, f64, f64) = (Kind::Peak, 1_000., 0., 1.);
+pub(super) const NEW_FILTER: (Kind, f64, f64, f64) = (Kind::Peak, 1_000., 0., 1.);
 
 /// The number fields of one filter row.
 pub(super) struct Row {
@@ -95,10 +97,11 @@ impl EqualizerView {
     /// being typed in included, since what it held belongs to the curve that was replaced.
     pub(super) fn show_curve(&mut self, cx: &mut Context<Self>) {
         let curve = self.playback.read(cx).equalizer_curve();
-        if self.shown.as_ref().is_some_and(|(shown, _)| shown == curve) {
+        if self.shown.as_ref() == Some(curve) {
             return;
         }
         let curve = curve.clone();
+        self.graph.follow(&curve);
         let texts: Vec<_> = self
             .fields()
             .map(|(field, input)| (input.clone(), shown(&curve, field)))
@@ -108,8 +111,7 @@ impl EqualizerView {
                 input.update(cx, |input, cx| input.set_text(text, cx));
             }
         }
-        let preamp = curve.preamp_db();
-        self.shown = Some((curve, preamp));
+        self.shown = Some(curve);
     }
 
     /// Applies what `field` holds when it differs from the curve, through the model's checks.
@@ -192,22 +194,6 @@ impl EqualizerView {
         self.apply(curve, cx);
     }
 
-    fn set_filters(&mut self, change: impl FnOnce(&mut Vec<Filter>), cx: &mut Context<Self>) {
-        let curve = self.playback.read(cx).equalizer_curve();
-        let mut filters = curve.filters().to_vec();
-        change(&mut filters);
-        if let Ok(curve) = Curve::new(curve.preamp(), filters) {
-            self.apply(curve, cx);
-        }
-    }
-
-    fn add_filter(&mut self, cx: &mut Context<Self>) {
-        let (kind, frequency, gain, q) = NEW_FILTER;
-        let filter = Filter::new(kind, frequency, gain, Width::Q(q), true)
-            .expect("the new filter is in range");
-        self.set_filters(|filters| filters.push(filter), cx);
-    }
-
     /// A number field and its unit after it.
     pub(super) fn number(&self, input: &Entity<Input>, unit: SharedString, cx: &App) -> AnyElement {
         let theme = cx.theme();
@@ -232,6 +218,8 @@ impl EqualizerView {
         wide: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let id = self.graph.id(index);
+        let selected = id.is_some() && id == self.graph.selected();
         let theme = *cx.theme();
         let row = &self.rows[index];
         let enabled = Switch::new(("equalizer-filter-on", index), filter.enabled()).on_click(
@@ -265,16 +253,7 @@ impl EqualizerView {
             .ghost()
             .icon("icons/x.svg")
             .tooltip("equalizer-remove-filter")
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.set_filters(
-                    |filters| {
-                        if index < filters.len() {
-                            filters.remove(index);
-                        }
-                    },
-                    cx,
-                )
-            }));
+            .on_click(cx.listener(move |this, _, _, cx| this.remove_filter(index, cx)));
         let values = div()
             .flex()
             .flex_wrap()
@@ -307,6 +286,17 @@ impl EqualizerView {
                 .child(values),
         }
         .py_1()
+        .px_2()
+        .rounded(theme.radius)
+        .when(selected, |row| row.bg(theme.table_active))
+        // In the capture phase, since the fields and the kind picker keep their mouse-down.
+        .when_some(id, |row, id| {
+            row.capture_any_mouse_down(cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                if this.graph.select(id) {
+                    cx.notify();
+                }
+            }))
+        })
         .into_any_element()
     }
 
@@ -337,7 +327,12 @@ impl EqualizerView {
                         .icon("icons/plus.svg")
                         .label(t!("equalizer-add-filter"))
                         .disabled(full)
-                        .on_click(cx.listener(|this, _, _, cx| this.add_filter(cx))),
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let (kind, frequency, gain, q) = NEW_FILTER;
+                            let filter = Filter::new(kind, frequency, gain, Width::Q(q), true)
+                                .expect("the new filter is in range");
+                            this.add_filter(filter, cx)
+                        })),
                 ),
             )
             .into_any_element()

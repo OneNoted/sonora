@@ -1,7 +1,7 @@
 use gpui::prelude::*;
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, Focusable as _, Render, ScrollHandle, Task, Window,
-    div,
+    div, svg,
 };
 use i18n::t;
 use music::equalizer::{Curve, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset};
@@ -15,16 +15,18 @@ use crate::chrome::Chrome;
 use crate::shared::confirm::{self, Confirm};
 use crate::shared::equalizer::profile_picker;
 
+use graph::Graph;
 use rows::{Row, figure};
 
+mod graph;
 mod rows;
 mod transfer;
 
 const PROFILES: &str = "equalizer-profiles";
 const PRESETS: &str = "equalizer-presets";
 const PREAMP: &str = "equalizer-preamp";
-/// How tall the space the response graph will fill is, in cover sizes.
-const GRAPH: f32 = 1.4;
+/// Below this an overload rounds to no tenth of a decibel at all.
+const SLIGHT_OVERLOAD: f64 = 0.05;
 /// How wide a number field is, in cover sizes.
 const FIELD: f32 = 0.6;
 /// How wide the rename dialog is, in cover sizes.
@@ -46,9 +48,11 @@ pub(crate) struct EqualizerView {
     /// The rename dialog's own focus, and what had focus before it opened, given back on close.
     focus: FocusHandle,
     restore: Option<FocusHandle>,
-    /// The curve the fields were last filled from, and the preamp it resolves to, so the
-    /// fields are only rewritten, and the automatic preamp only computed, when it changes.
-    shown: Option<(Curve, f64)>,
+    /// The curve the fields were last filled from, so they are only rewritten when it changes.
+    shown: Option<Curve>,
+    graph: Graph,
+    /// The output meter's reads, held while the screen is the one shown and dropped with it.
+    metering: Option<Task<()>>,
     /// The file being read in or written out.
     file: Option<Task<()>>,
 }
@@ -85,6 +89,8 @@ impl EqualizerView {
             focus: cx.focus_handle(),
             restore: None,
             shown: None,
+            graph: Graph::new(),
+            metering: None,
             file: None,
         };
         let fields: Vec<_> = view
@@ -99,15 +105,28 @@ impl EqualizerView {
         view
     }
 
+    /// Reads the output meter and the playing rate while the screen is the one shown.
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if visible != self.metering.is_some() {
+            self.metering = visible.then(|| {
+                self.playback
+                    .update(cx, |playback, cx| playback.watch_overload(cx))
+            });
+        }
+    }
+
+    /// Plays `curve`, an edit made on this screen.
     fn apply(&mut self, curve: Curve, cx: &mut Context<Self>) {
+        self.graph.edited(&curve);
         self.playback
             .update(cx, |playback, cx| playback.set_equalizer_curve(curve, cx));
     }
 
     fn set_preamp(&mut self, auto: bool, cx: &mut Context<Self>) {
-        let Some((curve, preamp)) = self.shown.clone() else {
+        let Some(curve) = self.shown.clone() else {
             return;
         };
+        let preamp = self.playback.read(cx).equalizer_preamp_db();
         if auto == (curve.preamp() == Preamp::Auto) {
             return;
         }
@@ -204,10 +223,12 @@ impl EqualizerView {
         let on = self.playback.read(cx).equalizer();
         div()
             .flex()
+            .flex_wrap()
             .items_center()
-            .justify_between()
             .gap_4()
             .child(heading(t!("settings-equalizer"), cx))
+            .child(div().flex_1())
+            .children(self.overload(cx))
             .child(
                 div()
                     .flex()
@@ -226,6 +247,48 @@ impl EqualizerView {
             .into_any_element()
     }
 
+    /// How far the output went over full scale lately, and the fix, while it overloads. The fix
+    /// is left out when the preamp is as low as it goes.
+    fn overload(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let playback = self.playback.read(cx);
+        let over = playback.overload()?;
+        let fixable = playback.equalizer() && playback.lowered_preamp().is_some();
+        let theme = *cx.theme();
+        let size = theme.text(Text::Small);
+        Some(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(size)
+                .text_color(theme.danger)
+                .child(
+                    svg()
+                        .path(icons::path("icons/triangle-alert.svg"))
+                        .size(size)
+                        .flex_none()
+                        .text_color(theme.danger),
+                )
+                .child(match over < SLIGHT_OVERLOAD {
+                    true => t!("equalizer-overload-slight"),
+                    false => t!("equalizer-overload", db = figure(over, 1)),
+                })
+                .when(fixable, |this| {
+                    this.child(
+                        Button::new("equalizer-lower-preamp")
+                            .small()
+                            .outline()
+                            .label(t!("equalizer-lower-preamp"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.playback
+                                    .update(cx, |playback, cx| playback.lower_preamp(cx))
+                            })),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     /// The profile that plays with the others to choose from, what can be done to it, and the
     /// presets to load into it.
     fn profiles(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -239,7 +302,11 @@ impl EqualizerView {
             .items(Preset::ALL.map(|chosen| {
                 MenuItem::new(chosen.id(), i18n::lookup(preset_key(chosen), None))
                     .selected(preset == Some(chosen))
-                    .on_click(cx.listener(move |this, _, _, cx| this.apply(chosen.curve(), cx)))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.playback.update(cx, |playback, cx| {
+                            playback.set_equalizer_curve(chosen.curve(), cx)
+                        })
+                    }))
             }));
         let action = |id: &'static str, icon: &'static str, tooltip: &'static str| {
             Button::new(id).small().ghost().icon(icon).tooltip(tooltip)
@@ -285,7 +352,7 @@ impl EqualizerView {
         let theme = *cx.theme();
         let curve = self.playback.read(cx).equalizer_curve();
         let auto = curve.preamp() == Preamp::Auto;
-        let resolved = self.shown.as_ref().map_or(0., |(_, preamp)| *preamp);
+        let resolved = self.playback.read(cx).equalizer_preamp_db();
         let mode = Picker::new(
             PREAMP,
             &self.popovers,
@@ -374,7 +441,8 @@ impl Render for EqualizerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = *cx.theme();
         let inset = theme.metrics.inset;
-        let wide = Chrome::room(window, cx).fits(Room::Wide);
+        let room = Chrome::room(window, cx);
+        let wide = room.fits(Room::Wide);
 
         let page = Scroller::new("equalizer-page", &self.scrollbar)
             .p(inset)
@@ -384,13 +452,7 @@ impl Render for EqualizerView {
                     .flex_col()
                     .gap_6()
                     .child(self.header(cx))
-                    .child(
-                        div()
-                            .w_full()
-                            .h(theme.metrics.cover * GRAPH)
-                            .rounded(theme.radius)
-                            .bg(theme.secondary),
-                    )
+                    .child(self.graph(room, cx))
                     .child(self.profiles(cx))
                     .child(
                         div()

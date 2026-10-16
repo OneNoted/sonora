@@ -27,6 +27,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The equalizer is now fully parametric, on its own screen: shape up to 20 filters of eight
   kinds, keep several named profiles, and import an AutoEQ or Equalizer APO profile for your
   headphones from a file or the clipboard. You can export a profile the same way.
+- The equalizer screen draws your filters' curve, with the preamp as a line across it. Drag a
+  filter to move it, scroll over it to make it wider or narrower, double-click to add one and
+  right-click to remove it. When the sound clips, the screen says by how much and can lower the
+  preamp for you.
 
 ### Changed
 

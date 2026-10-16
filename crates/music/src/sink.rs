@@ -604,7 +604,7 @@ mod tests {
             equalizer: writer.reader(),
             spectrum: Spectrum::default(),
         };
-        let chained = Chained::new(queue, &chain, format);
+        let chained = Chained::new(queue, &chain, format, false);
         let right: Vec<f32> = chained.skip(3).take(4_096).skip(1).step_by(2).collect();
         assert!(
             right.iter().all(|sample| sample.to_bits() == 0),

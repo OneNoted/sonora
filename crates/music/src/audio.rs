@@ -13,6 +13,9 @@ use crate::spectrum::{Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
 const BUFFER: Duration = Duration::from_millis(50);
+/// The loudest sample an integer device takes: the largest `f32` below one, since one itself
+/// overflows a 24-bit sample and wraps to the far end of the scale.
+const FULL_SCALE: f32 = 1. - f32::EPSILON / 2.;
 
 /// The device stream every output in the process mixes into, so the sound server sees Sonora as
 /// one client however many engines are running. It runs at the rate of whatever played last and
@@ -133,6 +136,8 @@ struct Device {
     /// The rate the stream was opened for, whether or not the device could honour it.
     wanted: Option<u32>,
     rate: u32,
+    /// Whether the stream takes integer samples, which wrap past full scale instead of clipping.
+    integer: bool,
     failed: Arc<AtomicBool>,
     /// Taken when an output reopens the device at another rate, which closes the stream under
     /// every output still on it.
@@ -219,6 +224,7 @@ impl Device {
             id,
             wanted: rate,
             rate: config.sample_rate(),
+            integer: !format.is_float(),
             failed,
             stream: Mutex::new(Some(stream)),
         })
@@ -340,7 +346,8 @@ impl Output {
 }
 
 /// A player's queue run through its `Chain`: the equalizer filters it and the volume ramps it,
-/// then the tap hears it. One frame count places every sample for all of them.
+/// then the tap hears it, and an integer device gets it held within full scale. One frame count
+/// places every sample for all of them.
 pub(crate) struct Chained<I> {
     input: I,
     frames: Frames,
@@ -352,6 +359,9 @@ pub(crate) struct Chained<I> {
     /// Whether the tap hears the samples from before the gain. It is read once per frame so
     /// every channel of a frame agrees.
     unscaled: bool,
+    /// Whether the output is held within full scale, for a device whose integer samples would
+    /// wrap. The tap hears the sample before the clamp, so a meter can still see the over.
+    clamped: bool,
 
     current: f32,
     target: f32,
@@ -361,7 +371,7 @@ pub(crate) struct Chained<I> {
 }
 
 impl<I: Source> Chained<I> {
-    pub(crate) fn new(input: I, chain: &Chain, format: Format) -> Self {
+    pub(crate) fn new(input: I, chain: &Chain, format: Format, clamped: bool) -> Self {
         let gain = chain.volume.get();
         Self {
             input,
@@ -371,6 +381,7 @@ impl<I: Source> Chained<I> {
             volume: chain.volume.clone(),
             tap: chain.spectrum.attach(),
             unscaled: false,
+            clamped,
             current: gain,
             target: gain,
             step: 0.0,
@@ -432,7 +443,10 @@ impl<I: Source> Iterator for Chained<I> {
         };
         self.tap.push(heard);
 
-        Some(output)
+        Some(match self.clamped {
+            true => output.clamp(-1., FULL_SCALE),
+            false => output,
+        })
     }
 }
 
@@ -601,7 +615,7 @@ fn ident(device: &cpal::Device) -> String {
 fn attach(chain: &Chain, device: &Device) -> (rodio::Player, Format) {
     let format = Format::default();
     let (sink, source) = rodio::Player::new();
-    device.add(Chained::new(source, chain, format.clone()));
+    device.add(Chained::new(source, chain, format.clone(), device.integer));
     (sink, format)
 }
 

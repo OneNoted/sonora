@@ -468,7 +468,7 @@ impl<I: Source> Iterator for Chained<I> {
             true => equalized,
             false => output,
         };
-        self.tap.push(heard);
+        self.tap.push(place.channel, heard);
         self.meter.record(output);
 
         Some(match self.clamped {

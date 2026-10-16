@@ -5,7 +5,7 @@ use gpui::{
 };
 use i18n::t;
 use music::equalizer::{Curve, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset};
-use state::{AppSettings, Playback, Sonora, equalizer_profile_label};
+use state::{AppSettings, Playback, Signal, Sonora, equalizer_profile_label};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, MenuItem, Modal, Picker, Popovers,
     Room, Scrollbar, Scroller, Submit, Switch, Text, heading,
@@ -37,6 +37,7 @@ const DIALOG: f32 = 2.8;
 pub(crate) struct EqualizerView {
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
+    signal: Entity<Signal>,
     popovers: Popovers,
     scrollbar: Entity<Scrollbar>,
     preamp: Entity<Input>,
@@ -51,8 +52,9 @@ pub(crate) struct EqualizerView {
     /// The curve the fields were last filled from, so they are only rewritten when it changes.
     shown: Option<Curve>,
     graph: Graph,
-    /// The output meter's reads, held while the screen is the one shown and dropped with it.
-    metering: Option<Task<()>>,
+    /// The output meter's reads and the spectrum's, held while the screen is the one shown and
+    /// dropped with it.
+    metering: Option<[Task<()>; 2]>,
     /// The file being read in or written out.
     file: Option<Task<()>>,
 }
@@ -64,6 +66,7 @@ impl EqualizerView {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = Sonora::global(cx).settings.clone();
+        let signal = Sonora::global(cx).signal.clone();
         let id = cx.entity_id();
         let preamp = cx.new(|cx| Input::new("", cx).compact());
         let rows = (0..MAX_FILTERS).map(|_| Row::new(cx)).collect();
@@ -74,12 +77,14 @@ impl EqualizerView {
         })
         .detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
+        cx.observe(&signal, |_, _, cx| cx.notify()).detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
 
         let mut view = Self {
             playback,
             settings,
+            signal,
             popovers: Popovers::default(),
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id)),
             preamp,
@@ -105,12 +110,16 @@ impl EqualizerView {
         view
     }
 
-    /// Reads the output meter and the playing rate while the screen is the one shown.
+    /// Reads the output meter, the playing rate and the spectrum while the screen is the one
+    /// shown.
     pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if visible != self.metering.is_some() {
             self.metering = visible.then(|| {
-                self.playback
-                    .update(cx, |playback, cx| playback.watch_overload(cx))
+                [
+                    self.playback
+                        .update(cx, |playback, cx| playback.watch_overload(cx)),
+                    self.signal.update(cx, |signal, cx| signal.watch(cx)),
+                ]
             });
         }
     }

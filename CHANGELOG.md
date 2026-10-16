@@ -31,6 +31,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   filter to move it, scroll over it to make it wider or narrower, double-click to add one and
   right-click to remove it. When the sound clips, the screen says by how much and can lower the
   preamp for you.
+- The equalizer screen shows the spectrum of the music behind the curve, as it is before the
+  equalizer, so you can see what you are shaping. Its scale on the right reads in dBFS.
 
 ### Changed
 

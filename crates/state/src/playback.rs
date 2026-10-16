@@ -2164,6 +2164,11 @@ impl Playback {
         self.equalizer.rate()
     }
 
+    /// The spectrum of the music on its way into the equalizer, on every output.
+    pub fn equalizer_heard(&self) -> music::Analyzer {
+        self.equalizer.heard().clone()
+    }
+
     /// How many decibels over full scale the output went lately, while something watches.
     pub fn overload(&self) -> Option<f64> {
         self.overload.db()

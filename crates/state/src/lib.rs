@@ -26,6 +26,7 @@ mod search;
 mod session;
 mod settings;
 mod sheets;
+mod signal;
 mod snapshot;
 mod song;
 mod tags;
@@ -63,6 +64,7 @@ pub use settings::{
     RomanizationScripts, SYSTEM_FONT, SideTab, equalizer_profile_label, remember_window,
     window_placement,
 };
+pub use signal::Signal;
 pub use song::SongDetail;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
@@ -184,6 +186,7 @@ pub struct Sonora {
     pub scan: Entity<Scan>,
     pub scrobbling: Entity<Scrobbling>,
     pub settings: Entity<AppSettings>,
+    pub signal: Entity<Signal>,
     pub updates: Entity<Updates>,
     pub usage: Entity<Usage>,
     pub wake: Entity<Wake>,
@@ -279,6 +282,7 @@ pub fn init(
     let usage = cx.new(|cx| Usage::new(session.clone(), database, io.clone(), cx));
     let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
     let potoken = potoken::attach(cx);
+    let signal = cx.new(|_| Signal::new(playback.clone()));
     let wake = cx.new(|cx| Wake::new(settings.clone(), playback.clone(), io.clone(), cx));
     discord::attach(
         playback.clone(),
@@ -305,6 +309,7 @@ pub fn init(
         scan,
         scrobbling,
         settings,
+        signal,
         updates,
         usage,
         wake,

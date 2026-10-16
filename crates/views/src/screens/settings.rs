@@ -18,7 +18,7 @@ use gpui::{
 use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
 use music::drm::Origin;
-use music::equalizer::{self, Preset};
+use music::equalizer::{MAX_FILTERS, Preset};
 use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
@@ -84,6 +84,8 @@ const SLEEP: &str = "sleep";
 const EQUALIZER_PRESETS: &str = "equalizer-presets";
 // the step a dragged band snaps to, in decibels
 const EQUALIZER_STEP: f32 = 0.5;
+/// How far each way a band slider reaches, in decibels: the graphic equalizer's range.
+const EQUALIZER_REACH: f32 = 12.;
 const SLEEP_MAX_MINUTES: u64 = 120;
 const SLEEP_MAGNETS: [u64; 4] = [15, 30, 45, 60];
 const SLEEP_MAGNET_WEIGHT: usize = 4;
@@ -437,7 +439,7 @@ impl SettingsView {
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             sleep: ScrubberState::new("sleep"),
-            bands: (0..equalizer::BANDS)
+            bands: (0..MAX_FILTERS)
                 .map(|band| ScrubberState::new(format!("equalizer-band-{band}")))
                 .collect(),
             pending_sleep: None,
@@ -2355,8 +2357,7 @@ impl SettingsView {
         let theme = *cx.theme();
         let muted = theme.muted_foreground;
         let small = theme.text(Text::Small);
-        let gains = self.playback.read(cx).equalizer_gains();
-        let chosen = Preset::matching(&gains);
+        let chosen = Preset::matching(self.playback.read(cx).equalizer_curve());
         let label = match chosen {
             Some(preset) => i18n::lookup(preset_key(preset), None),
             None => t!("settings-equalizer-custom"),
@@ -2369,7 +2370,7 @@ impl SettingsView {
                     .selected(chosen == Some(preset))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.playback.update(cx, |playback, cx| {
-                            playback.set_equalizer_gains(&preset.gains(), cx)
+                            playback.set_equalizer_curve(preset.curve(), cx)
                         });
                         cx.notify();
                     }))
@@ -2384,25 +2385,27 @@ impl SettingsView {
         )
     }
 
-    /// One vertical slider per band with its gain above and its frequency below. Shown only
-    /// while the equalizer is on. Dragging writes straight through to the engines, so the
-    /// change is heard as it is made.
+    /// One vertical slider per filter of the curve with its gain above and its frequency below.
+    /// Shown only while the equalizer is on. Dragging writes straight through to the engines, so
+    /// the change is heard as it is made.
     fn equalizer_bands_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
-        let gains = self.playback.read(cx).equalizer_gains();
-        let span = equalizer::MAX_GAIN - equalizer::MIN_GAIN;
+        let curve = self.playback.read(cx).equalizer_curve().clone();
+        let span = 2. * EQUALIZER_REACH;
 
-        let columns = self.bands.iter().enumerate().map(|(band, state)| {
-            let gain = gains[band];
-            let fraction = (gain - equalizer::MIN_GAIN) / span;
+        let bands = curve.filters().iter().zip(&self.bands).enumerate();
+        let columns = bands.map(|(band, (filter, state))| {
+            let gain = filter.gain() as f32;
+            let frequency = filter.frequency() as f32;
+            let fraction = (gain + EQUALIZER_REACH) / span;
             let slider = Scrubber::new(state, fraction)
                 .vertical()
                 .colors(theme.progress_bar, theme.muted, theme.foreground)
                 .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                    let raw = equalizer::MIN_GAIN + fraction * span;
+                    let raw = fraction * span - EQUALIZER_REACH;
                     let gain = (raw / EQUALIZER_STEP).round() * EQUALIZER_STEP;
                     this.playback.update(cx, |playback, cx| {
-                        playback.set_equalizer_gain(band, gain, cx)
+                        playback.set_equalizer_gain(band, f64::from(gain), cx)
                     });
                 }));
 
@@ -2437,7 +2440,7 @@ impl SettingsView {
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .line_height(relative(LEADING))
-                        .child(hertz(equalizer::FREQUENCIES[band])),
+                        .child(hertz(frequency)),
                 )
         });
 

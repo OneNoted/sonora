@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
-use music::equalizer::{Equalizer, Gains};
+use music::equalizer::{Curve, Edit, EqualizerWriter};
 use music::{
     MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory,
     Player, Spectrum, Track,
@@ -393,8 +393,9 @@ pub struct Playback {
     level: f32,
     normalisation: bool,
     gapless: bool,
-    /// Shared with every engine started here, so a change reaches the output without a restart.
-    equalizer: Equalizer,
+    /// Its reader is shared with every engine started here, so a change reaches the output
+    /// without a restart.
+    equalizer: EqualizerWriter,
     repeat: Repeat,
     radio: bool,
     /// The track the current similar-tracks suggestions were drawn from.
@@ -496,9 +497,9 @@ impl Playback {
         let level = settings.read(cx).volume();
         let normalisation = settings.read(cx).normalisation();
         let gapless = settings.read(cx).gapless();
-        let equalizer = Equalizer::new(
+        let equalizer = EqualizerWriter::new(
             settings.read(cx).equalizer(),
-            &settings.read(cx).equalizer_gains(),
+            settings.read(cx).equalizer_curve(),
         );
         let repeat = settings.read(cx).repeat();
         let radio = settings.read(cx).radio();
@@ -2088,12 +2089,12 @@ impl Playback {
         self.equalizer.enabled()
     }
 
-    pub fn equalizer_gains(&self) -> Gains {
-        self.equalizer.gains()
+    pub fn equalizer_curve(&self) -> &Curve {
+        self.equalizer.curve()
     }
 
     /// Turns the equalizer on or off. The engines pick the change up on their next frame and
-    /// glide to it, so no restart and no click.
+    /// fade to it, so no restart and no click.
     pub fn set_equalizer(&mut self, on: bool, cx: &mut Context<Self>) {
         self.equalizer.set_enabled(on);
         self.settings
@@ -2101,21 +2102,31 @@ impl Playback {
         cx.notify();
     }
 
-    pub fn set_equalizer_gains(&mut self, gains: &Gains, cx: &mut Context<Self>) {
-        self.equalizer.set_gains(gains);
-        self.settings
-            .update(cx, |settings, cx| settings.set_equalizer_gains(gains, cx));
-        cx.notify();
+    /// Puts a whole curve in place, the way a preset pick does: the engines cross-fade to it.
+    pub fn set_equalizer_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+        self.equalizer.set_curve(curve, Edit::Replace);
+        self.save_equalizer_curve(cx);
     }
 
-    /// Moves one band, leaving the rest of the curve as it is.
-    pub fn set_equalizer_gain(&mut self, band: usize, gain: f32, cx: &mut Context<Self>) {
-        let mut gains = self.equalizer.gains();
-        let Some(slot) = gains.get_mut(band) else {
+    /// Moves one filter's gain, the way a dragged slider does: the engines glide to it.
+    pub fn set_equalizer_gain(&mut self, index: usize, gain: f64, cx: &mut Context<Self>) {
+        let mut curve = self.equalizer.curve().clone();
+        let Some(filter) = curve.filters_mut().get_mut(index) else {
             return;
         };
-        *slot = gain;
-        self.set_equalizer_gains(&gains, cx);
+        let Ok(moved) = filter.with_gain(gain) else {
+            return;
+        };
+        *filter = moved;
+        self.equalizer.set_curve(curve, Edit::Glide);
+        self.save_equalizer_curve(cx);
+    }
+
+    fn save_equalizer_curve(&mut self, cx: &mut Context<Self>) {
+        let curve = self.equalizer.curve().clone();
+        self.settings
+            .update(cx, |settings, cx| settings.set_equalizer_curve(&curve, cx));
+        cx.notify();
     }
 
     pub fn set_gapless(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -2236,7 +2247,7 @@ impl Playback {
             gapless: self.gapless,
             position_interval: POSITION_INTERVAL,
             gain: gain(self.level),
-            equalizer: self.equalizer.clone(),
+            equalizer: self.equalizer.reader(),
         };
         let (engine, events) = playback.start(config);
 
@@ -2258,7 +2269,7 @@ impl Playback {
             gapless: self.gapless,
             position_interval: POSITION_INTERVAL,
             gain: gain(self.level),
-            equalizer: self.equalizer.clone(),
+            equalizer: self.equalizer.reader(),
         };
         let (engine, events) = playback.start(config);
 

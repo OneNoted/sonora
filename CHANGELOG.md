@@ -27,6 +27,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- An equalizer preset that boosts no longer distorts loud passages. Sonora lowers the level by
+  the curve's highest boost, so the balance you chose is what you hear.
 - The Prefer local lyrics switch is gone. Lyrics in a file's own tags now compete with the
   online providers, so synced lyrics found online beat plain ones in the file. Rank Local first
   to have it win when both are equally good.

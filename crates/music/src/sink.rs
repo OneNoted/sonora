@@ -453,8 +453,9 @@ mod tests {
     use rodio::queue::SourcesQueueOutput;
 
     use super::*;
-    use crate::audio::{Frames, SmoothGain, Volume};
-    use crate::equalizer::{BANDS, Equalized, Equalizer};
+    use crate::audio::{Chain, Chained, Frames, Volume};
+    use crate::equalizer::{Curve, EqualizerWriter};
+    use crate::spectrum::Spectrum;
 
     /// A named sequence of pushes, pulls, clears and pauses run against a fresh rig.
     type Scenario = (&'static str, fn(&mut Rig));
@@ -597,10 +598,14 @@ mod tests {
             format,
             ..
         } = rig;
-        let equalizer = Equalizer::new(true, &[12.; BANDS]);
-        let equalized = Equalized::new(queue, equalizer, format.clone());
-        let chain = SmoothGain::new(equalized, Volume::new(0.5), 0.5, Duration::ZERO, format);
-        let right: Vec<f32> = chain.skip(3).take(4_096).skip(1).step_by(2).collect();
+        let writer = EqualizerWriter::new(true, Curve::bands(&[12.; 10]));
+        let chain = Chain {
+            volume: Volume::new(0.5),
+            equalizer: writer.reader(),
+            spectrum: Spectrum::default(),
+        };
+        let chained = Chained::new(queue, &chain, format);
+        let right: Vec<f32> = chained.skip(3).take(4_096).skip(1).step_by(2).collect();
         assert!(
             right.iter().all(|sample| sample.to_bits() == 0),
             "{:?}",

@@ -8,7 +8,7 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use rodio::source::SeekError;
 use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, Source};
 
-use crate::equalizer::{Equalized, Equalizer};
+use crate::equalizer::{Engine, Equalizer};
 use crate::spectrum::{Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
@@ -339,10 +339,16 @@ impl Output {
     }
 }
 
-pub struct SmoothGain<I> {
+/// A player's queue run through its `Chain`: the equalizer filters it and the volume ramps it,
+/// then the tap hears it. One frame count places every sample for all of them.
+pub(crate) struct Chained<I> {
     input: I,
+    frames: Frames,
+    equalizer: Engine,
+    /// Where the rate the equalizer runs at is published.
+    rate: Arc<AtomicU32>,
     volume: Volume,
-    tap: Option<Tap>,
+    tap: Tap,
     /// Whether the tap hears the samples from before the gain. It is read once per frame so
     /// every channel of a frame agrees.
     unscaled: bool,
@@ -350,55 +356,42 @@ pub struct SmoothGain<I> {
     current: f32,
     target: f32,
     step: f32,
-
-    ramp: Duration,
     frames_left: u32,
     ramp_frames: u32,
-
-    frames: Frames,
 }
 
-impl<I: Source> SmoothGain<I> {
-    pub(crate) fn new(
-        input: I,
-        volume: Volume,
-        initial: f32,
-        ramp: Duration,
-        format: Format,
-    ) -> Self {
+impl<I: Source> Chained<I> {
+    pub(crate) fn new(input: I, chain: &Chain, format: Format) -> Self {
+        let gain = chain.volume.get();
         Self {
             input,
-            volume,
-            tap: None,
+            frames: Frames::new(format),
+            equalizer: Engine::new(chain.equalizer.clone()),
+            rate: chain.equalizer.rate_slot(),
+            volume: chain.volume.clone(),
+            tap: chain.spectrum.attach(),
             unscaled: false,
-            current: initial,
-            target: initial,
+            current: gain,
+            target: gain,
             step: 0.0,
-            ramp,
             frames_left: 0,
             ramp_frames: 1,
-            frames: Frames::new(format),
         }
     }
 
-    pub fn with_tap(mut self, tap: Tap) -> Self {
-        self.tap = Some(tap);
-        self
-    }
-
-    /// Takes up a new format. The tap learns it, and the ramp keeps its length in time.
+    /// Takes up a new format. Every stage learns it, and the ramp keeps its length in time.
     fn resync(&mut self) {
         let rate = self.frames.rate();
         let channels = self.frames.channels();
-        if let Some(tap) = &self.tap {
-            tap.format(rate, channels);
-        }
-        self.ramp_frames = (self.ramp.as_secs_f64() * rate as f64).round().max(1.0) as u32;
+        self.equalizer.set_format(rate, channels);
+        self.rate.store(rate, Ordering::Relaxed);
+        self.tap.format(rate, channels);
+        self.ramp_frames = (RAMP.as_secs_f64() * rate as f64).round().max(1.0) as u32;
         self.frames_left = self.frames_left.min(self.ramp_frames);
     }
 }
 
-impl<I: Source> Iterator for SmoothGain<I> {
+impl<I: Source> Iterator for Chained<I> {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -411,7 +404,8 @@ impl<I: Source> Iterator for SmoothGain<I> {
             self.resync();
         }
         if place.channel == 0 {
-            self.unscaled = self.tap.as_ref().is_some_and(Tap::absolute);
+            self.equalizer.begin();
+            self.unscaled = self.tap.absolute();
             let requested = self.volume.get().max(0.0);
 
             if requested.to_bits() != self.target.to_bits() {
@@ -430,19 +424,19 @@ impl<I: Source> Iterator for SmoothGain<I> {
             }
         }
 
-        let output = sample * self.current;
-        if let Some(tap) = self.tap.as_mut() {
-            tap.push(match self.unscaled {
-                true => sample,
-                false => output,
-            });
-        }
+        let equalized = self.equalizer.process(usize::from(place.channel), sample);
+        let output = equalized * self.current;
+        let heard = match self.unscaled {
+            true => equalized,
+            false => output,
+        };
+        self.tap.push(heard);
 
         Some(output)
     }
 }
 
-impl<I: Source> Source for SmoothGain<I> {
+impl<I: Source> Source for Chained<I> {
     fn current_span_len(&self) -> Option<usize> {
         self.input.current_span_len()
     }
@@ -460,7 +454,9 @@ impl<I: Source> Source for SmoothGain<I> {
     }
 
     fn try_seek(&mut self, position: Duration) -> Result<(), SeekError> {
-        self.input.try_seek(position)
+        self.input.try_seek(position)?;
+        self.equalizer.reset();
+        Ok(())
     }
 }
 
@@ -603,19 +599,9 @@ fn ident(device: &cpal::Device) -> String {
 
 /// A fresh player whose chain plays into `device`, and the format word its chunks publish into.
 fn attach(chain: &Chain, device: &Device) -> (rodio::Player, Format) {
-    let applied = chain.volume.get();
-    let tap = chain.spectrum.attach();
     let format = Format::default();
     let (sink, source) = rodio::Player::new();
-    let equalized = Equalized::new(source, chain.equalizer.clone(), format.clone());
-    let gained = SmoothGain::new(
-        equalized,
-        chain.volume.clone(),
-        applied,
-        RAMP,
-        format.clone(),
-    );
-    device.add(gained.with_tap(tap));
+    device.add(Chained::new(source, chain, format.clone()));
     (sink, format)
 }
 

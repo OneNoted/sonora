@@ -1080,6 +1080,7 @@ toast-sample-burst = Toast number { $name }
 response-graph-hz = { $value } Hz
 response-graph-khz = { $value } kHz
 response-graph-db = { $value } dB
+response-graph-dbfs = { $value } dBFS
 response-graph-readout = { $frequency } · { $direction ->
         [up] +{ $gain }
         [down] -{ $gain }

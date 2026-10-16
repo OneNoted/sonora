@@ -23,6 +23,9 @@ const DEADZONE: f32 = 3.;
 const FREQUENCIES: [f32; 10] = [
     20., 50., 100., 200., 500., 1000., 2000., 5000., 10000., 20000.,
 ];
+/// How far apart the spectrum's scale is labelled, in decibels. Sparse and dim, so it never
+/// reads as the response's own scale.
+const SPECTRUM_STEP: f32 = 60.;
 
 type Edit = Rc<dyn Fn(&GraphEdit, &mut Window, &mut App)>;
 
@@ -199,11 +202,18 @@ pub struct ResponseGraph {
     state: ResponseGraphState,
     axes: ResponseAxes,
     response: Vec<ResponsePoint>,
-    spectrum: Vec<ResponsePoint>,
+    spectrum: Option<Spectrum>,
     nodes: Vec<ResponseNode>,
     reference: Option<(f32, SharedString)>,
     bypassed: bool,
     on_edit: Option<Edit>,
+}
+
+/// Levels drawn behind the plot on a scale of their own.
+struct Spectrum {
+    points: Vec<ResponsePoint>,
+    /// The levels at the bottom and the top of the plot.
+    scale: [f32; 2],
 }
 
 impl ResponseGraph {
@@ -214,7 +224,7 @@ impl ResponseGraph {
             state: state.clone(),
             axes,
             response: Vec::new(),
-            spectrum: Vec::new(),
+            spectrum: None,
             nodes: Vec::new(),
             reference: None,
             bypassed: false,
@@ -228,9 +238,18 @@ impl ResponseGraph {
         self
     }
 
-    /// Optional spectrum samples use the same Hz/dB axes. No analyser runs in this element.
-    pub fn spectrum(mut self, points: impl IntoIterator<Item = ResponsePoint>) -> Self {
-        self.spectrum = points.into_iter().collect();
+    /// Draws levels behind the grid and the response, in ascending frequency order and on a
+    /// scale of their own: `scale` runs from the level at the bottom of the plot to the one at
+    /// the top, in dBFS.
+    pub fn spectrum(
+        mut self,
+        points: impl IntoIterator<Item = ResponsePoint>,
+        scale: RangeInclusive<f32>,
+    ) -> Self {
+        self.spectrum = (scale.start() < scale.end()).then(|| Spectrum {
+            points: points.into_iter().collect(),
+            scale: [*scale.start(), *scale.end()],
+        });
         self
     }
 
@@ -420,7 +439,7 @@ impl RenderOnce for ResponseGraph {
                         let plot_bounds = Bounds::from_corners(
                             point(bounds.left() + pad * 7., bounds.top() + pad * 3.),
                             point(
-                                (bounds.right() - pad * 3.).max(bounds.left() + pad * 7.),
+                                (bounds.right() - pad * 7.).max(bounds.left() + pad * 7.),
                                 (bounds.bottom() - pad * 4.).max(bounds.top() + pad * 3.),
                             ),
                         );
@@ -495,13 +514,13 @@ fn finite_clamp(value: f32, range: [f32; 2]) -> f32 {
     }
 }
 
-/// Paints the grid and its labels, the spectrum, the reference level, the response and the
+/// Paints the spectrum, the grid and its labels, the reference level, the response and the
 /// nodes, in that order, inside the plot's `bounds`.
 fn paint_plot(
     bounds: Bounds<Pixels>,
     plot: &Plot,
     response: &[ResponsePoint],
-    spectrum: &[ResponsePoint],
+    spectrum: &Option<Spectrum>,
     theme: &Theme,
     window: &mut Window,
     cx: &mut App,
@@ -511,6 +530,9 @@ fn paint_plot(
     }
     let pad = theme.metrics.pad;
     let axes = plot.axes;
+    if let Some(spectrum) = spectrum {
+        paint_spectrum(bounds, axes, spectrum, theme, window, cx);
+    }
     let mut last_label = bounds.left() - pad * 10.;
     for hz in FREQUENCIES
         .into_iter()
@@ -581,25 +603,6 @@ fn paint_plot(
             .map(|value| axes.project(*value, bounds))
             .collect::<Vec<_>>()
     };
-    let spectrum = project(spectrum);
-    if let (Some(first), Some(last)) = (spectrum.first(), spectrum.last()) {
-        let mut area = PathBuilder::fill();
-        area.move_to(point(first.x, bounds.bottom()));
-        for sample in &spectrum {
-            area.line_to(*sample);
-        }
-        area.line_to(point(last.x, bounds.bottom()));
-        area.close();
-        if let Ok(path) = area.build() {
-            window.paint_path(path, theme.muted_foreground.opacity(0.1));
-        }
-        line(
-            &spectrum,
-            HAIRLINE,
-            theme.muted_foreground.opacity(0.3),
-            window,
-        );
-    }
     let (curve, level) = match plot.bypassed {
         true => (theme.muted_foreground, theme.muted_foreground),
         false => (theme.primary, theme.foreground),
@@ -683,6 +686,65 @@ fn paint_plot(
             bounds,
             plot.radius,
             theme,
+            window,
+            cx,
+        );
+    }
+}
+
+/// Fills the spectrum from the bottom of the plot up to its levels, and labels its scale along
+/// the right edge.
+fn paint_spectrum(
+    bounds: Bounds<Pixels>,
+    axes: ResponseAxes,
+    spectrum: &Spectrum,
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let scale = ResponseAxes {
+        gain: spectrum.scale,
+        ..axes
+    };
+    let points: Vec<_> = spectrum
+        .points
+        .iter()
+        .filter(|value| value.frequency_hz.is_finite() && value.gain_db.is_finite())
+        .map(|value| scale.project(*value, bounds))
+        .collect();
+    if let (Some(first), Some(last)) = (points.first(), points.last()) {
+        let mut area = PathBuilder::fill();
+        area.move_to(point(first.x, bounds.bottom()));
+        for sample in &points {
+            area.line_to(*sample);
+        }
+        area.line_to(point(last.x, bounds.bottom()));
+        area.close();
+        if let Ok(path) = area.build() {
+            window.paint_path(path, theme.muted_foreground.opacity(0.1));
+        }
+        line(
+            &points,
+            HAIRLINE,
+            theme.muted_foreground.opacity(0.3),
+            window,
+        );
+    }
+    let [bottom, top] = spectrum.scale;
+    let start = (bottom / SPECTRUM_STEP).ceil() as i32;
+    let end = (top / SPECTRUM_STEP).floor() as i32;
+    for tick in start..=end {
+        let level = tick as f32 * SPECTRUM_STEP;
+        let y = scale.y(level, bounds);
+        text(
+            t!("response-graph-dbfs", value = level),
+            point(
+                bounds.right() + theme.metrics.pad * 6.,
+                y - theme.text(Text::Tiny) / 2.,
+            ),
+            1.,
+            theme.muted_foreground.opacity(0.4),
+            None,
             window,
             cx,
         );

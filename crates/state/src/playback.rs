@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
-use music::equalizer::{Curve, Edit, EqualizerWriter, apo};
+use music::equalizer::{Curve, Edit, EqualizerWriter, Preamp, apo};
 use music::{
     Meter, MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents,
     PlaybackFactory, Player, Spectrum, Track,
@@ -85,6 +85,7 @@ impl QueuePlacement {
     }
 }
 
+use crate::overload::Overload;
 use crate::queue::Queue;
 use serde::{Deserialize, Serialize};
 
@@ -135,6 +136,11 @@ const STATION_DRY_LIMIT: u8 = 3;
 
 /// How many unreadable files a toast names before it cuts the list short.
 const LISTED_FILES: usize = 5;
+/// How often the output meter is read while something watches for overload.
+const METER_TICK: Duration = Duration::from_millis(100);
+/// How long after the last glided edit the curve is stored, so a drag or a run of wheel steps
+/// reaches the settings once, when it pauses.
+const GLIDE_STORE: Duration = Duration::from_millis(300);
 
 /// A track the engine was asked to fetch ahead, and whether it was also lined up to follow the
 /// current one gaplessly.
@@ -398,6 +404,11 @@ pub struct Playback {
     equalizer: EqualizerWriter,
     /// Shared with every engine like the equalizer's reader, and read only while watched.
     meter: Meter,
+    overload: Overload,
+    /// Stores a glided curve in the settings once the edits pause.
+    glide_store: Option<Task<()>>,
+    /// The rate the equalizer plays at as of the last meter read, so a change can be told.
+    equalizer_rate: Option<u32>,
     repeat: Repeat,
     radio: bool,
     /// The track the current similar-tracks suggestions were drawn from.
@@ -496,6 +507,8 @@ impl Playback {
         })
         .detach();
         cx.subscribe(&settings, |this, _, _: &Reloaded, cx| {
+            // The file's curve wins over a glide that was still to be stored.
+            this.glide_store = None;
             this.follow_equalizer(cx)
         })
         .detach();
@@ -525,6 +538,9 @@ impl Playback {
             gapless,
             equalizer,
             meter: Meter::default(),
+            overload: Overload::default(),
+            glide_store: None,
+            equalizer_rate: None,
             repeat,
             radio,
             seeded: None,
@@ -2074,6 +2090,7 @@ impl Playback {
         self.level = level.clamp(0., 1.);
         self.settings
             .update(cx, |settings, cx| settings.set_volume(self.level, cx));
+        self.overload.settle(Instant::now());
         let level = gain(self.level);
         if let Some(engine) = self.engine.as_ref() {
             engine.set_gain(level);
@@ -2104,6 +2121,7 @@ impl Playback {
     /// fade to it, so no restart and no click.
     pub fn set_equalizer(&mut self, on: bool, cx: &mut Context<Self>) {
         self.equalizer.set_enabled(on);
+        self.overload.settle(Instant::now());
         self.settings
             .update(cx, |settings, cx| settings.set_equalizer(on, cx));
         cx.notify();
@@ -2112,12 +2130,98 @@ impl Playback {
     /// Puts a whole curve in place of the playing profile's, the way a preset pick or a typed
     /// value does: the engines cross-fade to it.
     pub fn set_equalizer_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+        if curve == *self.equalizer.curve() {
+            return;
+        }
         self.equalizer.set_curve(curve, Edit::Replace);
+        self.overload.settle(Instant::now());
         self.save_equalizer_curve(cx);
+    }
+
+    /// Puts a curve in place that moves one filter a little from the playing one, the way a
+    /// drag does: the engines glide it there. The settings store it once the edits pause.
+    pub fn glide_equalizer_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
+        if curve == *self.equalizer.curve() {
+            return;
+        }
+        self.equalizer.set_curve(curve, Edit::Glide);
+        self.overload.settle(Instant::now());
+        self.glide_store = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(GLIDE_STORE).await;
+            this.update(cx, |this, cx| this.store_glided(cx)).ok();
+        }));
+        cx.notify();
+    }
+
+    /// The preamp the playing curve resolves to, in decibels.
+    pub fn equalizer_preamp_db(&self) -> f64 {
+        self.equalizer.preamp_db()
+    }
+
+    /// The rate the equalizer's response is heard at: the highest any output plays at, or
+    /// `None` while nothing has played.
+    pub fn equalizer_rate(&self) -> Option<u32> {
+        self.equalizer.rate()
+    }
+
+    /// How many decibels over full scale the output went lately, while something watches.
+    pub fn overload(&self) -> Option<f64> {
+        self.overload.db()
+    }
+
+    /// The preamp "Lower preamp" would set, or `None` without an overload or when the preamp
+    /// is as low as it goes.
+    pub fn lowered_preamp(&self) -> Option<f64> {
+        self.overload.lowered(self.equalizer.preamp_db())
+    }
+
+    /// Reads the output meter and the playing rate for as long as the returned task is held,
+    /// starting from no overload.
+    pub fn watch_overload(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        self.overload = Overload::default();
+        self.meter.take();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(METER_TICK).await;
+                if this.update(cx, |this, cx| this.read_meter(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Lowers the preamp by the overload and a margin, made manual, so what overloaded fits.
+    pub fn lower_preamp(&mut self, cx: &mut Context<Self>) {
+        let Some(preamp) = self.lowered_preamp() else {
+            return;
+        };
+        let filters = self.equalizer.curve().filters().to_vec();
+        if let Ok(curve) = Curve::new(Preamp::Manual(preamp), filters) {
+            self.set_equalizer_curve(curve, cx);
+        }
+    }
+
+    fn read_meter(&mut self, cx: &mut Context<Self>) {
+        let changed = self.overload.observe(self.meter.take(), Instant::now());
+        let rate = self.equalizer.rate();
+        if changed || rate != self.equalizer_rate {
+            self.equalizer_rate = rate;
+            cx.notify();
+        }
+    }
+
+    /// Stores a glided curve that waits for the edits to pause now, so a profile change that
+    /// follows keeps it in the profile it was made in.
+    fn store_glided(&mut self, cx: &mut Context<Self>) {
+        if self.glide_store.take().is_some() {
+            self.save_equalizer_curve(cx);
+        }
     }
 
     /// Plays equalizer profile `index`, cross-fading to its curve.
     pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.store_glided(cx);
         self.settings.update(cx, |settings, cx| {
             settings.select_equalizer_profile(index, cx)
         });
@@ -2127,6 +2231,7 @@ impl Playback {
     /// Adds a profile named after `name` holding `curve` and plays it. `AppSettings` makes the
     /// name unique.
     pub fn add_equalizer_profile(&mut self, name: &str, curve: Curve, cx: &mut Context<Self>) {
+        self.store_glided(cx);
         self.settings.update(cx, |settings, cx| {
             settings.add_equalizer_profile(name, &curve, cx)
         });
@@ -2136,6 +2241,7 @@ impl Playback {
     /// Removes profile `index` while it is still the one named `name`, unless it is the only
     /// one, and plays the profile that `AppSettings` picks in its place.
     pub fn remove_equalizer_profile(&mut self, index: usize, name: &str, cx: &mut Context<Self>) {
+        self.store_glided(cx);
         self.settings.update(cx, |settings, cx| {
             settings.remove_equalizer_profile(index, name, cx)
         });
@@ -2165,6 +2271,7 @@ impl Playback {
     fn follow_equalizer(&mut self, cx: &mut Context<Self>) {
         let settings = self.settings.read(cx);
         let (on, curve) = (settings.equalizer(), settings.equalizer_curve());
+        self.overload.settle(Instant::now());
         // Whichever change is heard goes last, so only one replace reaches the ear.
         match on {
             true => {
@@ -2180,6 +2287,7 @@ impl Playback {
     }
 
     fn save_equalizer_curve(&mut self, cx: &mut Context<Self>) {
+        self.glide_store = None;
         let curve = self.equalizer.curve().clone();
         self.settings
             .update(cx, |settings, cx| settings.set_equalizer_curve(&curve, cx));

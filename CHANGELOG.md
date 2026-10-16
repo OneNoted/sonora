@@ -24,6 +24,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Copy link tells you it worked. Where there is no link to copy, the entry is greyed out and
   says why.
 - Sonora tells you when a library scan you started has finished.
+- The equalizer is now fully parametric, on its own screen: shape up to 20 filters of eight
+  kinds, keep several named profiles, and import an AutoEQ or Equalizer APO profile for your
+  headphones from a file or the clipboard. You can export a profile the same way.
 
 ### Changed
 

@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use crate::shared::confirm::{Confirm, Kind};
 use crate::shared::effects;
+use crate::shared::equalizer::profile_picker;
 use crate::shared::local;
 use crate::shared::popups::{AccountPicker, CookiePrompt, SearchPopup, matches_query};
 use crate::shared::text;
@@ -18,7 +19,6 @@ use gpui::{
 use gpui::{ScrollHandle, prelude::*, svg};
 use i18n::{Language, t};
 use music::drm::Origin;
-use music::equalizer::{MAX_FILTERS, Preset};
 use music::scrobble::{Link, Secret};
 use music::{AccountChoice, SignIn, SignInPrompt, WritingSystem};
 use router::{Destination, NavEntry, Screen, SettingsTab, navigate};
@@ -81,11 +81,7 @@ const MOTION: &str = "motion";
 const PACE: &str = "pace";
 const SAVER: &str = "saver";
 const SLEEP: &str = "sleep";
-const EQUALIZER_PRESETS: &str = "equalizer-presets";
-// the step a dragged band snaps to, in decibels
-const EQUALIZER_STEP: f32 = 0.5;
-/// How far each way a band slider reaches, in decibels: the graphic equalizer's range.
-const EQUALIZER_REACH: f32 = 12.;
+const EQUALIZER_PROFILES: &str = "equalizer-profiles";
 const SLEEP_MAX_MINUTES: u64 = 120;
 const SLEEP_MAGNETS: [u64; 4] = [15, 30, 45, 60];
 const SLEEP_MAGNET_WEIGHT: usize = 4;
@@ -184,8 +180,8 @@ enum Slot {
     StayAwake,
     Widevine,
     Equalizer,
-    EqualizerPreset,
-    EqualizerBands,
+    EqualizerProfile,
+    EqualizerScreen,
     LyricsProviders,
     LyricsPriority,
     Karaoke,
@@ -336,8 +332,6 @@ pub struct SettingsView {
     scrollbar: Entity<Scrollbar>,
     opacity: ScrubberState,
     sleep: ScrubberState,
-    /// One slider per equalizer band, lowest first.
-    bands: Vec<ScrubberState>,
     pending_sleep: Option<Option<Sleep>>,
     popovers: Popovers,
     server: Entity<Input>,
@@ -439,9 +433,6 @@ impl SettingsView {
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(me)),
             opacity: ScrubberState::new("opacity"),
             sleep: ScrubberState::new("sleep"),
-            bands: (0..MAX_FILTERS)
-                .map(|band| ScrubberState::new(format!("equalizer-band-{band}")))
-                .collect(),
             pending_sleep: None,
             popovers: Popovers::default(),
             server: cx.new(|cx| Input::new("login-server-hint", cx)),
@@ -644,11 +635,12 @@ impl SettingsView {
                 if self.drm.read(cx).shown(cx) {
                     slots.push(Slot::Widevine);
                 }
-                slots.extend([Slot::Title("settings-group-equalizer"), Slot::Equalizer]);
-                if self.playback.read(cx).equalizer() {
-                    slots.push(Slot::EqualizerPreset);
-                    slots.push(Slot::EqualizerBands);
-                }
+                slots.extend([
+                    Slot::Title("settings-group-equalizer"),
+                    Slot::Equalizer,
+                    Slot::EqualizerProfile,
+                    Slot::EqualizerScreen,
+                ]);
                 slots.extend([Slot::Title("settings-group-lyrics"), Slot::LyricsProviders]);
                 if self
                     .settings
@@ -812,11 +804,14 @@ impl SettingsView {
                 (t!("settings-widevine"), i18n::lookup(detail, None))
             }
             Slot::Equalizer => (t!("settings-equalizer"), t!("settings-equalizer-detail")),
-            Slot::EqualizerPreset => (
-                t!("settings-equalizer-preset"),
-                t!("settings-equalizer-preset-detail"),
+            Slot::EqualizerProfile => (
+                t!("settings-equalizer-profile"),
+                t!("settings-equalizer-profile-detail"),
             ),
-            Slot::EqualizerBands => (t!("settings-group-equalizer"), SharedString::default()),
+            Slot::EqualizerScreen => (
+                t!("settings-equalizer-editor"),
+                t!("settings-equalizer-editor-detail"),
+            ),
             Slot::LyricsProviders => (
                 t!("settings-lyrics-providers"),
                 t!("settings-lyrics-providers-detail"),
@@ -899,16 +894,6 @@ impl SettingsView {
             Slot::Accounts => snapped(self.accounts_height(&theme, cx), window),
             Slot::LocalFolder => snapped(self.local_height(&theme, cx), window),
             Slot::LyricsPriority => snapped(self.lyrics_priority_height(&theme, cx), window),
-            Slot::EqualizerBands => snapped(
-                SECTION_GAP
-                    + line(&theme, Text::Tiny)
-                    + BLOCK_GAP
-                    + theme.metrics.cover
-                    + BLOCK_GAP
-                    + line(&theme, Text::Tiny)
-                    + SECTION_GAP,
-                window,
-            ),
             Slot::Widevine => snapped(self.widevine_height(&theme, window, cx), window),
             _ => snapped(standard_height(&theme), window),
         }
@@ -1036,8 +1021,8 @@ impl SettingsView {
             Slot::StayAwake => self.stay_awake_row(cx).element,
             Slot::Widevine => self.widevine_row(cx).element,
             Slot::Equalizer => self.equalizer_row(cx).element,
-            Slot::EqualizerPreset => self.equalizer_preset_row(cx).element,
-            Slot::EqualizerBands => self.equalizer_bands_row(cx).element,
+            Slot::EqualizerProfile => self.equalizer_profile_row(cx).element,
+            Slot::EqualizerScreen => self.equalizer_screen_row(cx).element,
             Slot::LyricsProviders => self.lyrics_providers_row(cx).element,
             Slot::LyricsPriority => self.lyrics_priority_row(cx).element,
             Slot::Karaoke => self.karaoke_lyrics_row(cx).element,
@@ -2351,109 +2336,42 @@ impl SettingsView {
         )
     }
 
-    /// The preset picker. It reads the current curve back, so a band moved by hand shows as
-    /// Custom and a curve that happens to match a preset shows that preset's name.
-    fn equalizer_preset_row(&self, cx: &mut Context<Self>) -> Setting {
+    /// The profile that plays, chosen from the ones the equalizer screen keeps.
+    fn equalizer_profile_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
-        let muted = theme.muted_foreground;
-        let small = theme.text(Text::Small);
-        let chosen = Preset::matching(self.playback.read(cx).equalizer_curve());
-        let label = match chosen {
-            Some(preset) => i18n::lookup(preset_key(preset), None),
-            None => t!("settings-equalizer-custom"),
-        };
-
-        let picker = Picker::new(EQUALIZER_PRESETS, &self.popovers, label)
-            .width(Picker::NARROW)
-            .items(Preset::ALL.map(|preset| {
-                MenuItem::new(preset.id(), i18n::lookup(preset_key(preset), None))
-                    .selected(chosen == Some(preset))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.playback.update(cx, |playback, cx| {
-                            playback.set_equalizer_curve(preset.curve(), cx)
-                        });
-                        cx.notify();
-                    }))
-            }));
+        let picker = profile_picker(
+            EQUALIZER_PROFILES,
+            &self.popovers,
+            &self.playback,
+            &self.settings,
+            cx,
+        )
+        .width(Picker::REGULAR);
 
         self.row(
-            t!("settings-equalizer-preset"),
-            t!("settings-equalizer-preset-detail"),
-            muted,
-            small,
+            t!("settings-equalizer-profile"),
+            t!("settings-equalizer-profile-detail"),
+            theme.muted_foreground,
+            theme.text(Text::Small),
             picker.into_any_element(),
         )
     }
 
-    /// One vertical slider per filter of the curve with its gain above and its frequency below.
-    /// Shown only while the equalizer is on. Dragging writes straight through to the engines, so
-    /// the change is heard as it is made.
-    fn equalizer_bands_row(&self, cx: &mut Context<Self>) -> Setting {
+    fn equalizer_screen_row(&self, cx: &mut Context<Self>) -> Setting {
         let theme = *cx.theme();
-        let curve = self.playback.read(cx).equalizer_curve().clone();
-        let span = 2. * EQUALIZER_REACH;
 
-        let bands = curve.filters().iter().zip(&self.bands).enumerate();
-        let columns = bands.map(|(band, (filter, state))| {
-            let gain = filter.gain() as f32;
-            let frequency = filter.frequency() as f32;
-            let fraction = (gain + EQUALIZER_REACH) / span;
-            let slider = Scrubber::new(state, fraction)
-                .vertical()
-                .colors(theme.progress_bar, theme.muted, theme.foreground)
-                .on_move(cx.listener(move |this, fraction: &f32, _, cx| {
-                    let raw = fraction * span - EQUALIZER_REACH;
-                    let gain = (raw / EQUALIZER_STEP).round() * EQUALIZER_STEP;
-                    this.playback.update(cx, |playback, cx| {
-                        playback.set_equalizer_gain(band, f64::from(gain), cx)
-                    });
-                }));
-
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .text_size(theme.text(Text::Tiny))
-                        .text_color(theme.muted_foreground)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .line_height(relative(LEADING))
-                        .child(t!("settings-equalizer-decibels", db = decibels(gain))),
-                )
-                .child(
-                    div()
-                        .h(theme.metrics.cover)
-                        .flex()
-                        .justify_center()
-                        .child(slider),
-                )
-                .child(
-                    div()
-                        .text_size(theme.text(Text::Tiny))
-                        .text_color(theme.muted_foreground)
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .line_height(relative(LEADING))
-                        .child(hertz(frequency)),
-                )
-        });
-
-        Setting {
-            title: t!("settings-group-equalizer"),
-            detail: SharedString::default(),
-            element: div()
-                .flex()
-                .w_full()
-                .py_3()
-                .children(columns)
+        self.row(
+            t!("settings-equalizer-editor"),
+            t!("settings-equalizer-editor-detail"),
+            theme.muted_foreground,
+            theme.text(Text::Small),
+            Button::new("open-equalizer")
+                .label(t!("settings-equalizer-open"))
+                .small()
+                .outline()
+                .on_click(|_, _, cx| navigate(Destination::Equalizer, cx))
                 .into_any_element(),
-        }
+        )
     }
 
     fn sleep_row(&self, cx: &mut Context<Self>) -> Setting {
@@ -4922,42 +4840,6 @@ fn sleep_label(sleep: Option<Sleep>) -> SharedString {
         Some(Sleep::EndOfTrack) => t!("settings-sleep-end-of-track"),
         Some(Sleep::After(after)) => t!("settings-sleep-minutes", count = after.as_secs() / 60),
         None => t!("settings-sleep-off"),
-    }
-}
-
-fn preset_key(preset: Preset) -> &'static str {
-    match preset {
-        Preset::Flat => "settings-equalizer-flat",
-        Preset::BassBoost => "settings-equalizer-bass-boost",
-        Preset::BassReducer => "settings-equalizer-bass-reducer",
-        Preset::TrebleBoost => "settings-equalizer-treble-boost",
-        Preset::Vocal => "settings-equalizer-vocal",
-        Preset::Rock => "settings-equalizer-rock",
-        Preset::Pop => "settings-equalizer-pop",
-        Preset::Jazz => "settings-equalizer-jazz",
-        Preset::Classical => "settings-equalizer-classical",
-        Preset::Electronic => "settings-equalizer-electronic",
-        Preset::Acoustic => "settings-equalizer-acoustic",
-        Preset::Loudness => "settings-equalizer-loudness",
-    }
-}
-
-/// A band gain as the readout shows it: signed, with the decimal only when it is not zero.
-fn decibels(gain: f32) -> String {
-    match gain == 0. {
-        true => "0".to_owned(),
-        false => format!("{gain:+}"),
-    }
-}
-
-/// A band's centre frequency in hertz below a kilohertz and in kilohertz from there on.
-fn hertz(frequency: f32) -> SharedString {
-    match frequency >= 1_000. {
-        true => t!(
-            "settings-equalizer-kilohertz",
-            khz = (frequency / 1_000.).round() as i64
-        ),
-        false => t!("settings-equalizer-hertz", hz = frequency.round() as i64),
     }
 }
 

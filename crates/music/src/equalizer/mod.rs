@@ -228,10 +228,6 @@ impl Filter {
         self.enabled
     }
 
-    pub fn with_gain(self, gain: f64) -> Result<Self, Invalid> {
-        Self::new(self.kind, self.frequency, gain, self.width, self.enabled)
-    }
-
     pub fn with_enabled(self, enabled: bool) -> Self {
         Self { enabled, ..self }
     }

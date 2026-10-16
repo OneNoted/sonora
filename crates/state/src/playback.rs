@@ -2113,20 +2113,6 @@ impl Playback {
         self.save_equalizer_curve(cx);
     }
 
-    /// Moves one filter's gain, the way a dragged slider does: the engines glide to it.
-    pub fn set_equalizer_gain(&mut self, index: usize, gain: f64, cx: &mut Context<Self>) {
-        let mut curve = self.equalizer.curve().clone();
-        let Some(filter) = curve.filters_mut().get_mut(index) else {
-            return;
-        };
-        let Ok(moved) = filter.with_gain(gain) else {
-            return;
-        };
-        *filter = moved;
-        self.equalizer.set_curve(curve, Edit::Glide);
-        self.save_equalizer_curve(cx);
-    }
-
     /// Plays equalizer profile `index`, cross-fading to its curve.
     pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Context<Self>) {
         self.settings.update(cx, |settings, cx| {

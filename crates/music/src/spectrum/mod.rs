@@ -1,5 +1,6 @@
-//! What is playing, analysed for drawing: the visualizer's 32 bands per channel of what reaches
-//! the device. `feed` carries the samples to its analyzer.
+//! What is playing, analysed for drawing. `Spectrum` is the visualizer's 32 bands per channel of
+//! what reaches the device. `analyzer` reads the music on its way into the equalizer, finely
+//! enough to draw behind its response. `feed` carries a stage's samples to either.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -10,6 +11,10 @@ use rustfft::num_complex::Complex32;
 
 use feed::{Feed, Heard, Listener};
 
+pub(crate) use analyzer::Probe;
+pub use analyzer::{Analyzer, Level, Watch};
+
+mod analyzer;
 mod feed;
 
 const N_BANDS: usize = 32;

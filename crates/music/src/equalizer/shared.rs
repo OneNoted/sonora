@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering, fence};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use super::{Curve, Filter, Kind, MAX_CHANNELS, MAX_FILTERS, Width};
+use crate::spectrum::Analyzer;
 
 /// How a curve change should reach the ear. A glide is a permission rather than an order, since
 /// the reader replaces any move too big to glide, while a replace is never glided.
@@ -55,6 +56,8 @@ struct Shared {
     /// The rate each live output runs at, so the UI can draw the response at the one that plays.
     /// Only the non-audio side locks it.
     rates: Mutex<Vec<Weak<AtomicU32>>>,
+    /// What every output's equalizer hears ahead of its preamp and filters.
+    heard: Analyzer,
 }
 
 /// One filter's fields as atomics. `word` packs the kind, the width unit and whether it is on.
@@ -78,6 +81,7 @@ impl EqualizerWriter {
             slots: std::array::from_fn(|_| Slot::default()),
             unprocessed: AtomicBool::new(false),
             rates: Mutex::new(Vec::new()),
+            heard: Analyzer::default(),
         });
         let mut writer = Self {
             shared,
@@ -123,6 +127,11 @@ impl EqualizerWriter {
         self.curve = curve;
         self.place();
         self.publish(edit);
+    }
+
+    /// The spectrum of the music on its way into the equalizer, on every output.
+    pub fn heard(&self) -> &Analyzer {
+        &self.shared.heard
     }
 
     /// The highest rate any live output plays at, which is the one to draw the response at.
@@ -213,6 +222,10 @@ impl Equalizer {
         rates.retain(|rate| rate.strong_count() > 0);
         rates.push(Arc::downgrade(&slot));
         slot
+    }
+
+    pub(crate) fn heard(&self) -> &Analyzer {
+        &self.0.heard
     }
 
     pub(crate) fn flag_unprocessed(&self) {

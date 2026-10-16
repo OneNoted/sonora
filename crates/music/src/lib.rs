@@ -50,7 +50,7 @@ pub use models::{
     Playlist, PlaylistDetail, ReleaseType, RomanizedText, SavedArtist, Track, TrackKey, TrackTags,
     UserDetail, UserProfile, Voice, WritingSystem,
 };
-pub use spectrum::Spectrum;
+pub use spectrum::{Analyzer, Level, Spectrum, Watch};
 
 pub const LOCAL_TRACK_PREFIX: &str = "local:";
 pub const LOCAL_ALBUM_PREFIX: &str = "local-album:";

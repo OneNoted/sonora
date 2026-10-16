@@ -9,7 +9,7 @@ use rodio::source::SeekError;
 use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, Source};
 
 use crate::equalizer::{Engine, Equalizer};
-use crate::spectrum::{Spectrum, Tap};
+use crate::spectrum::{Probe, Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
 const BUFFER: Duration = Duration::from_millis(50);
@@ -370,12 +370,13 @@ impl Output {
     }
 }
 
-/// A player's queue run through its `Chain`: the equalizer filters it and the volume ramps it,
-/// then the tap and the meter hear it, and an integer device gets it held within full scale.
-/// One frame count places every sample for all of them.
+/// A player's queue run through its `Chain`: the probe hears it, the equalizer filters it and
+/// the volume ramps it, then the tap and the meter hear it, and an integer device gets it held
+/// within full scale. One frame count places every sample for all of them.
 pub(crate) struct Chained<I> {
     input: I,
     frames: Frames,
+    probe: Probe,
     equalizer: Engine,
     /// Where the rate the equalizer runs at is published.
     rate: Arc<AtomicU32>,
@@ -402,6 +403,7 @@ impl<I: Source> Chained<I> {
         Self {
             input,
             frames: Frames::new(format),
+            probe: chain.equalizer.heard().probe(),
             equalizer: Engine::new(chain.equalizer.clone()),
             rate: chain.equalizer.rate_slot(),
             volume: chain.volume.clone(),
@@ -423,6 +425,7 @@ impl<I: Source> Chained<I> {
         let channels = self.frames.channels();
         self.equalizer.set_format(rate, channels);
         self.rate.store(rate, Ordering::Relaxed);
+        self.probe.format(rate, channels);
         self.tap.format(rate, channels);
         self.ramp_frames = (RAMP.as_secs_f64() * rate as f64).round().max(1.0) as u32;
         self.frames_left = self.frames_left.min(self.ramp_frames);
@@ -441,6 +444,7 @@ impl<I: Source> Iterator for Chained<I> {
         if place.changed {
             self.resync();
         }
+        self.probe.hear(place.channel, sample);
         if place.channel == 0 {
             self.equalizer.begin();
             self.unscaled = self.tap.absolute();

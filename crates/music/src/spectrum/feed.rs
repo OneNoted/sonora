@@ -88,6 +88,11 @@ impl Feed {
         self.announced = false;
     }
 
+    /// Has the format sent again ahead of the next frame, for a listener that starts over.
+    pub(crate) fn reannounce(&mut self) {
+        self.announced = false;
+    }
+
     /// Takes one sample, `channel` being its place in its frame. A frame's first sample decides
     /// whether the whole frame fits.
     #[inline]
@@ -157,6 +162,19 @@ impl Listener {
                 return Some(Heard::Frame(&self.frame));
             }
         }
+    }
+
+    /// Drops everything waiting and the format with it, so nothing is read until the stage
+    /// sends a format again.
+    pub(crate) fn forget(&mut self) {
+        while self.samples.pop().is_ok() {
+            self.popped += 1;
+        }
+        while self.marks.peek().is_ok_and(|mark| mark.at <= self.popped) {
+            self.marks.pop().ok();
+        }
+        self.layout = None;
+        self.frame.clear();
     }
 
     /// Whether the stage is gone. What it sent and is still unread is not worth keeping.

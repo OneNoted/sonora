@@ -9,6 +9,8 @@ use rodio::source::SeekError;
 use rodio::{ChannelCount, DeviceSinkBuilder, MixerDeviceSink, SampleRate, Source};
 
 use crate::equalizer::{Engine, Equalizer};
+use crate::output;
+use crate::route::Route;
 use crate::spectrum::{Probe, Spectrum, Tap};
 
 pub const RAMP: Duration = Duration::from_millis(25);
@@ -153,6 +155,7 @@ pub struct Chain {
     pub equalizer: Equalizer,
     pub spectrum: Spectrum,
     pub meter: Meter,
+    pub route: Route,
 }
 
 /// One open stream on an output device, with the mixer the engines' chains play into.
@@ -225,6 +228,21 @@ impl Device {
         );
 
         let format = config.sample_format();
+        output::opened(output::Stream {
+            device: output::Device {
+                id: id.clone(),
+                name: device
+                    .description()
+                    .map_or_else(|_| id.clone(), |description| description.name().to_owned()),
+                port: None,
+                format: None,
+            },
+            format: output::Format {
+                rate: config.sample_rate(),
+                channels: config.channels(),
+                sample: output::Sample::of(format),
+            },
+        });
         let frames = (BUFFER.as_secs_f64() * config.sample_rate() as f64).round() as u32;
         let failed = Arc::new(AtomicBool::new(false));
         let stream_failed = failed.clone();
@@ -386,6 +404,8 @@ pub(crate) struct Chained<I> {
     /// every channel of a frame agrees.
     unscaled: bool,
     meter: Meter,
+    /// Told the format of what plays, for the signal path.
+    route: Route,
     /// Whether the output is held within full scale, for a device whose integer samples would
     /// wrap. The tap and the meter hear the sample before the clamp, so they still see the over.
     clamped: bool,
@@ -410,6 +430,7 @@ impl<I: Source> Chained<I> {
             tap: chain.spectrum.attach(),
             unscaled: false,
             meter: chain.meter.clone(),
+            route: chain.route.clone(),
             clamped,
             current: gain,
             target: gain,
@@ -427,6 +448,7 @@ impl<I: Source> Chained<I> {
         self.rate.store(rate, Ordering::Relaxed);
         self.probe.format(rate, channels);
         self.tap.format(rate, channels);
+        self.route.hear(rate, channels);
         self.ramp_frames = (RAMP.as_secs_f64() * rate as f64).round().max(1.0) as u32;
         self.frames_left = self.frames_left.min(self.ramp_frames);
     }

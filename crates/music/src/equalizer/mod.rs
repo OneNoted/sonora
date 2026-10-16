@@ -11,7 +11,7 @@ use std::f64::consts::{LN_2, SQRT_2};
 use std::fmt;
 use std::ops::RangeInclusive;
 
-use design::{Biquad, Shape, phi};
+use design::{Biquad, Coefficients, Shape, phi};
 pub(crate) use engine::Engine;
 pub use engine::MAX_CHANNELS;
 pub use shared::{Edit, Equalizer, EqualizerWriter};
@@ -334,6 +334,16 @@ impl Curve {
                 (0. - peak).min(0.)
             }
         }
+    }
+
+    /// Whether the enabled filters leave every sample untouched at `rate`: there are none, or
+    /// only peaks and shelves at 0 dB, which design to an exact identity. The preamp is apart.
+    pub fn passes_through(&self, rate: u32) -> bool {
+        let rate = f64::from(rate);
+        self.filters
+            .iter()
+            .filter(|filter| filter.enabled)
+            .all(|filter| Coefficients::of(&Shape::of(filter), rate).is_identity())
     }
 
     /// What the enabled filters do when playing at `rate`, without the preamp. This is the

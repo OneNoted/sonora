@@ -455,6 +455,7 @@ mod tests {
     use super::*;
     use crate::audio::{Chain, Chained, Frames, Meter, Volume};
     use crate::equalizer::{Curve, EqualizerWriter};
+    use crate::route::Route;
     use crate::spectrum::Spectrum;
 
     /// A named sequence of pushes, pulls, clears and pauses run against a fresh rig.
@@ -604,6 +605,7 @@ mod tests {
             equalizer: writer.reader(),
             spectrum: Spectrum::default(),
             meter: Meter::default(),
+            route: Route::default(),
         };
         let chained = Chained::new(queue, &chain, format, false);
         let right: Vec<f32> = chained.skip(3).take(4_096).skip(1).step_by(2).collect();

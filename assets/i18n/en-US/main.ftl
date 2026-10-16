@@ -724,6 +724,58 @@ equalizer-output-this = On this output
 equalizer-output-unbound = No profile of its own
 equalizer-output-others = On other outputs
 equalizer-output-keep = Keep the playing profile
+equalizer-signal-path = Signal path
+signal-path-source = Source
+signal-path-normalisation = Loudness normalization
+signal-path-equalizer = Equalizer
+signal-path-volume = Volume
+signal-path-sent = Sent to the device
+signal-path-server = Sound server
+signal-path-waiting = Nothing is playing
+signal-path-codec-flac = FLAC
+signal-path-codec-alac = ALAC
+signal-path-codec-pcm = PCM
+signal-path-codec-mp3 = MP3
+signal-path-codec-aac = AAC
+signal-path-codec-vorbis = Ogg Vorbis
+signal-path-codec-opus = Opus
+signal-path-codec-other = Other codec
+signal-path-bits = { $bits }-bit
+signal-path-float = { $bits }-bit float
+signal-path-kbps = { $kbps } kbps
+signal-path-rate = { $khz } kHz
+signal-path-channels = { $channels ->
+    [1] Mono
+    [2] Stereo
+   *[other] { $channels } channels
+}
+signal-path-off = Off
+signal-path-gain = { $db } dB
+signal-path-limited = Spotify's own, with a limiter
+signal-path-equalizer-untouched = On, leaves the sound untouched
+signal-path-equalizer-preamp = On, preamp { $db } dB
+signal-path-volume-level = { $percent }%, { $db } dB
+signal-path-full-volume = 100%
+signal-path-server-unknown = May convert the sound again. Sonora cannot see past this point.
+signal-path-server-converts = After Sonora, the sound server converts the sound to { $khz } kHz.
+signal-path-bit-perfect = Bit-perfect from Sonora
+signal-path-altered = Not bit-perfect from Sonora: { $changes }
+signal-path-change-rounded = { $bits }-bit samples rounded to 24 bits
+signal-path-change-normalised = normalization at { $db } dB
+signal-path-change-limited = Spotify's normalization
+signal-path-change-equalized = the equalizer
+signal-path-change-volume = volume under 100%
+signal-path-change-resampled = resampled from { $from } kHz to { $to } kHz
+signal-path-change-remixed = { $to ->
+    [1] mixed down to mono
+    [2] { $from ->
+        [1] spread from mono to stereo
+       *[other] mixed from { $from } channels to stereo
+    }
+   *[other] mixed from { $from } to { $to } channels
+}
+signal-path-change-requantized = { $bits }-bit samples for the device
+signal-path-list-separator = {", "}
 equalizer-invalid-frequency = Frequency must be between { $low } and { $high } Hz
 equalizer-invalid-gain = Gain must be between { $low } and { $high } dB
 equalizer-invalid-q = Q must be between { $low } and { $high }

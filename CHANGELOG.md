@@ -36,6 +36,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Give your headphones, DAC or speakers their own equalizer profile. When Sonora starts playing
   on that output, the equalizer switches to its profile, and you can pick one for every other
   output too.
+- The equalizer screen can show the signal path: the track's format, what Sonora does to the
+  sound, what it sends to your device, and whether that is bit-perfect or why not.
 
 ### Changed
 

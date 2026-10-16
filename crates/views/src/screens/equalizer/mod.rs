@@ -20,6 +20,7 @@ use rows::{Row, figure};
 
 mod graph;
 mod outputs;
+mod path;
 mod rows;
 mod transfer;
 
@@ -57,6 +58,8 @@ pub(crate) struct EqualizerView {
     /// The output meter's reads and the spectrum's, held while the screen is the one shown and
     /// dropped with it.
     metering: Option<[Task<()>; 2]>,
+    /// The signal path's reads, held while it is open.
+    path: Option<Task<()>>,
     /// The file being read in or written out.
     file: Option<Task<()>>,
 }
@@ -101,6 +104,7 @@ impl EqualizerView {
             shown: None,
             graph: Graph::new(),
             metering: None,
+            path: None,
             file: None,
         };
         let fields: Vec<_> = view
@@ -126,6 +130,9 @@ impl EqualizerView {
                     self.signal.update(cx, |signal, cx| signal.watch(cx)),
                 ]
             });
+        }
+        if !visible {
+            self.path = None;
         }
     }
 
@@ -243,6 +250,7 @@ impl EqualizerView {
             .child(heading(t!("settings-equalizer"), cx))
             .child(div().flex_1())
             .children(self.overload(cx))
+            .child(self.path_button(cx))
             .child(
                 div()
                     .flex()
@@ -467,6 +475,7 @@ impl Render for EqualizerView {
                     .gap_6()
                     .child(self.header(cx))
                     .child(self.graph(room, cx))
+                    .children(self.signal_path(cx))
                     .child(self.profiles(cx))
                     .children(self.outputs(cx))
                     .child(

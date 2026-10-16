@@ -66,7 +66,7 @@ pub use settings::{
     Reloaded, RomanizationScripts, SYSTEM_FONT, SideTab, equalizer_profile_label, remember_window,
     window_placement,
 };
-pub use signal::Signal;
+pub use signal::{Change, Equalizing, Signal, SignalPath, Source};
 pub use song::SongDetail;
 pub use tags::{TagState, Tags};
 pub use toast::{Outcome, Target, Toast, ToastAction, Toasts};
@@ -286,7 +286,7 @@ pub fn init(
     let pins = cx.new(|cx| Pins::new(settings.clone(), library.clone(), session.clone(), cx));
     let potoken = potoken::attach(cx);
     let outputs = cx.new(|cx| Outputs::new(playback.clone(), cx));
-    let signal = cx.new(|_| Signal::new(playback.clone()));
+    let signal = cx.new(|_| Signal::new(playback.clone(), outputs.clone()));
     let wake = cx.new(|cx| Wake::new(settings.clone(), playback.clone(), io.clone(), cx));
     discord::attach(
         playback.clone(),

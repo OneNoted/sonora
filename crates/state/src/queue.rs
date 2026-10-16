@@ -54,6 +54,7 @@ pub struct Stub {
     pub(crate) cover: Option<String>,
     pub(crate) seconds: f32,
     pub(crate) explicit: bool,
+    pub(crate) ai: bool,
     /// Which of the resume's `origins` the track was queued from.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) from: Option<usize>,
@@ -148,6 +149,7 @@ fn stub(track: &Track) -> Option<Stub> {
         cover: track.cover.clone(),
         seconds: track.duration.as_secs_f32(),
         explicit: track.explicit,
+        ai: track.ai,
         from: None,
     })
 }
@@ -175,6 +177,7 @@ fn hydrate(stub: Stub) -> Track {
         playcount: None,
         popularity: 0,
         explicit: stub.explicit,
+        ai: stub.ai,
         track_number: 0,
         disc_number: 0,
         tags: Vec::new(),
@@ -1114,6 +1117,7 @@ mod tests {
             playcount: None,
             popularity: 0,
             explicit: false,
+            ai: false,
             track_number: 0,
             disc_number: 0,
             tags: Vec::new(),

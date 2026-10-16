@@ -140,6 +140,7 @@ fn track_from(uri: &str, track: &TrackMessage) -> Track {
         playcount: None,
         popularity: track.popularity.unwrap_or_default().clamp(0, 100) as u32,
         explicit: track.explicit.unwrap_or_default(),
+        ai: false,
         track_number: track.number.unwrap_or_default().max(0) as u32,
         disc_number: track.disc_number.unwrap_or_default().max(0) as u32,
         tags: track.tags.clone(),

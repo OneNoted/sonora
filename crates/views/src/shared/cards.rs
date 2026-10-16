@@ -29,6 +29,7 @@ pub(crate) fn album_card(
     let toggled = playback.clone();
 
     Card::new(id, SharedString::from(album.name.clone()))
+        .when(album.ai, |card| card.badge(super::ai_badge()))
         .cover(cover)
         .weight(FontWeight::SEMIBOLD)
         .underline()
@@ -101,6 +102,7 @@ pub(crate) fn track_card(
         .tint(tint)
         .hint()
         .when(track.explicit, Card::explicit)
+        .when(track.ai, |card| card.badge(super::ai_badge()))
         .menu(CardMenu::opener(
             Item::Track(track.clone()),
             playback.clone(),

@@ -24,6 +24,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Copy link tells you it worked. Where there is no link to copy, the entry is greyed out and
   says why.
 - Sonora tells you when a library scan you started has finished.
+- Tidal as a provider: sign in with a code on link.tidal.com, then play your favorites,
+  playlists, mixes and search in up to 24-bit FLAC, whatever your plan includes.
+- Songs and albums the service labels as made by AI carry an AI mark, the way explicit ones
+  carry an E. Turn on Hide AI-generated music in Playback settings to leave them out of search,
+  home and radio. Tidal is the first service that labels them.
 - The equalizer is now fully parametric, on its own screen: shape up to 20 filters of eight
   kinds, keep several named profiles, and import an AutoEQ or Equalizer APO profile for your
   headphones from a file or the clipboard. You can export a profile the same way.

@@ -28,6 +28,7 @@ pub fn track(song: Child, cover: Option<String>) -> Track {
         playcount: song.play_count.map(|count| count as u64),
         popularity: 0,
         explicit: song.explicit_status.as_deref() == Some("explicit"),
+        ai: false,
         track_number: song.track.unwrap_or(0).max(0) as u32,
         disc_number: song.disc_number.unwrap_or(1).max(1) as u32,
         tags: Vec::new(),
@@ -62,6 +63,7 @@ pub fn album(source: AlbumId3, cover: Option<String>, cover_large: Option<String
         label,
         copyrights: Vec::new(),
         added_at: iso_8601_to_epoch(source.created.as_deref()),
+        ai: false,
     }
 }
 

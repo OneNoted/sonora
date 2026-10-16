@@ -971,6 +971,7 @@ impl LibraryView {
                 .weight(FontWeight::SEMIBOLD)
                 .flat()
                 .when(track.explicit, Card::explicit)
+                .when(track.ai, |card| card.badge(crate::shared::ai_badge()))
                 .bare_meta(artists)
                 .menu(move |event, _, cx| {
                     let Some(view) = view.upgrade() else {

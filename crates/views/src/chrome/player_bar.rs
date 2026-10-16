@@ -12,7 +12,7 @@ use i18n::t;
 use input::{ToggleFullscreen, ToggleLyrics, ToggleQueue};
 use state::{AppSettings, Playback, Queue, SideTab, Sonora};
 use ui::{
-    Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Popup, Room, Scrollbar, Scrubber,
+    Artwork, Badge, Button, InlineLink, InlineLinks, Popup, Room, Scrollbar, Scrubber,
     ScrubberState, clock, tabular,
 };
 
@@ -254,6 +254,7 @@ impl PlayerBar {
         let track = self.playback.read(cx).track();
         let cover = track.and_then(|track| track.cover.clone());
         let explicit = track.is_some_and(|track| track.explicit);
+        let ai = track.is_some_and(|track| track.ai);
         let like = like(track, &self.playback, cx);
 
         div()
@@ -321,7 +322,10 @@ impl PlayerBar {
                                         .truncate(),
                                 })
                                 .when(explicit, |this| {
-                                    this.child(div().flex_none().child(ExplicitBadge::new()))
+                                    this.child(div().flex_none().child(Badge::explicit()))
+                                })
+                                .when(ai, |this| {
+                                    this.child(div().flex_none().child(crate::shared::ai_badge()))
                                 })
                                 .child(like),
                         )

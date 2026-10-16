@@ -309,6 +309,8 @@ struct Values {
     discord_provider_button: bool,
     artwork_for_local_files: bool,
     lyrics_for_local_files: bool,
+    /// Leaves music its provider labels as AI-generated out of search, home and radio.
+    hide_ai: bool,
     /// Set once Local has been added to a list saved before it existed, so a user who turns it
     /// off afterwards is not given it back.
     local_lyrics_offered: bool,
@@ -514,6 +516,7 @@ impl Default for Values {
             discord_provider_button: true,
             artwork_for_local_files: true,
             lyrics_for_local_files: true,
+            hide_ai: false,
             local_lyrics_offered: false,
             lyrics_provider_priority: lyrics_priority(&[]),
             // Kugou and NetEase, the last two, start switched off.
@@ -1084,6 +1087,10 @@ impl AppSettings {
 
     pub fn lyrics_for_local_files(&self) -> bool {
         self.values.lyrics_for_local_files
+    }
+
+    pub fn hide_ai(&self) -> bool {
+        self.values.hide_ai
     }
 
     pub fn lyrics_providers(&self) -> &[String] {
@@ -1688,6 +1695,11 @@ impl AppSettings {
 
     pub fn set_lyrics_for_local_files(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.values.lyrics_for_local_files = enabled;
+        self.schedule_save(cx);
+    }
+
+    pub fn set_hide_ai(&mut self, hidden: bool, cx: &mut Context<Self>) {
+        self.values.hide_ai = hidden;
         self.schedule_save(cx);
     }
 

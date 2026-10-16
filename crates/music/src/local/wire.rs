@@ -583,6 +583,7 @@ pub fn track_from_file(
             playcount: None,
             popularity: 0,
             explicit: false,
+            ai: false,
             track_number,
             disc_number,
             tags: Vec::new(),
@@ -626,6 +627,7 @@ pub fn album_from_tracks(
         label: String::new(),
         copyrights: Vec::new(),
         added_at: tracks.iter().filter_map(|track| track.added_at).max(),
+        ai: false,
     }
 }
 

@@ -203,6 +203,7 @@ impl Store {
                     playcount: None,
                     popularity: 0,
                     explicit: row.get(10)?,
+                    ai: false,
                     track_number: 0,
                     disc_number: 0,
                     tags: Vec::new(),

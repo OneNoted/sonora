@@ -177,14 +177,31 @@ impl Root {
         });
 
         let io = Io::global(cx);
-        let home_state = cx.new(|cx| Home::new(library.clone(), session.clone(), io.clone(), cx));
+        let app_settings = Sonora::global(cx).settings.clone();
+        let home_state = cx.new(|cx| {
+            Home::new(
+                library.clone(),
+                session.clone(),
+                app_settings.clone(),
+                io.clone(),
+                cx,
+            )
+        });
         let home = cx.new(|cx| HomeView::new(home_state, playback.clone(), cx));
         let history = Sonora::global(cx).history.clone();
         let history = cx.new(|cx| HistoryView::new(history, playback.clone(), window, cx));
 
         let search_library = library.clone();
 
-        let queries = cx.new(|cx| Search::new(session.clone(), search_library, io.clone(), cx));
+        let queries = cx.new(|cx| {
+            Search::new(
+                session.clone(),
+                search_library,
+                app_settings,
+                io.clone(),
+                cx,
+            )
+        });
         let genres = cx.new(|cx| Genres::new(session.clone(), io.clone(), cx));
         let search = cx.new(|cx| SearchView::new(queries, genres.clone(), playback.clone(), cx));
 

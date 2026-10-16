@@ -39,6 +39,7 @@ pub fn track(source: ytmusic::Track, index: u32) -> Track {
         playcount: None,
         popularity: 0,
         explicit: source.explicit,
+        ai: false,
         track_number: index + 1,
         disc_number: 1,
         tags: Vec::new(),
@@ -75,6 +76,7 @@ pub fn album(source: ytmusic::Album) -> Album {
         label: String::new(),
         copyrights: Vec::new(),
         added_at: None,
+        ai: false,
     }
 }
 

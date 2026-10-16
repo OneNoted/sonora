@@ -14,9 +14,9 @@ use input::{ToggleFullscreen, ToggleWindowFullscreen, WORKSPACE_CONTEXT};
 use router::{Destination, navigate};
 use state::{AppSettings, Cover, FullscreenControlsAutohide, Playback, Queue, SideTab, Sonora};
 use ui::{
-    ActiveTheme as _, Artwork, Button, ExplicitBadge, InlineLink, InlineLinks, Motion,
-    Motioned as _, Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Text,
-    Visualizer, clock, glass, snapped,
+    ActiveTheme as _, Artwork, Badge, Button, InlineLink, InlineLinks, Motion, Motioned as _,
+    Popup, Room, Scrollbar, Scrubber, ScrubberState, Springs, TabBar, Text, Visualizer, clock,
+    glass, snapped,
 };
 
 use crate::chrome::{Aside, TitleBarOptions};
@@ -449,6 +449,7 @@ impl FullscreenView {
         };
         let album = track.and_then(|track| track.album_id.clone());
         let explicit = track.is_some_and(|track| track.explicit);
+        let ai = track.is_some_and(|track| track.ai);
         let meta_bounds = self.meta_bounds.clone();
         // Both lines carry a shadow in the page colour, so they stay legible where a visualizer
         // peak or bright ambient art passes behind them. The title ellipsizes without
@@ -462,7 +463,10 @@ impl FullscreenView {
                 .items_center()
                 .gap_2()
                 .when(explicit, |this| {
-                    this.child(div().flex_none().child(ExplicitBadge::new()))
+                    this.child(div().flex_none().child(Badge::explicit()))
+                })
+                .when(ai, |this| {
+                    this.child(div().flex_none().child(shared::ai_badge()))
                 })
                 .child(
                     div()
@@ -574,6 +578,7 @@ impl FullscreenView {
         };
         let album = track.and_then(|track| track.album_id.clone());
         let explicit = track.is_some_and(|track| track.explicit);
+        let ai = track.is_some_and(|track| track.ai);
 
         div()
             .flex()
@@ -632,7 +637,10 @@ impl FullscreenView {
                                     .child(title),
                             )
                             .when(explicit, |this| {
-                                this.child(div().flex_none().child(ExplicitBadge::new()))
+                                this.child(div().flex_none().child(Badge::explicit()))
+                            })
+                            .when(ai, |this| {
+                                this.child(div().flex_none().child(shared::ai_badge()))
                             })
                             .child(div().flex().flex_none().opacity(1. - hide).child(
                                 like(track, &self.playback, cx).when(frosted, Button::frosted),

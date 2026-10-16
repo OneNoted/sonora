@@ -7,7 +7,7 @@ use gpui::{
     svg,
 };
 
-use crate::ExplicitBadge;
+use crate::Badge;
 use crate::artwork::cover_palette;
 use crate::artwork::{Artwork, Avatar, ROUNDED};
 use crate::button::Button;
@@ -53,7 +53,7 @@ pub struct Card {
     art_radius: Option<Pixels>,
     circle: bool,
     tint: Option<Hsla>,
-    explicit: bool,
+    badges: Vec<Badge>,
     fill: bool,
     hovered: Option<StyleRefinement>,
     press: Option<Press>,
@@ -88,7 +88,7 @@ impl Card {
             art_radius: None,
             circle: false,
             tint: None,
-            explicit: false,
+            badges: Vec::new(),
             fill: true,
             hovered: None,
             press: None,
@@ -219,8 +219,13 @@ impl Card {
         self
     }
 
-    pub fn explicit(mut self) -> Self {
-        self.explicit = true;
+    pub fn explicit(self) -> Self {
+        self.badge(Badge::explicit())
+    }
+
+    /// Adds a mark after the title, after any added before it.
+    pub fn badge(mut self, badge: Badge) -> Self {
+        self.badges.push(badge);
         self
     }
 
@@ -296,7 +301,7 @@ impl RenderOnce for Card {
             art_radius,
             circle,
             tint,
-            explicit,
+            badges,
             fill,
             hovered,
             press,
@@ -461,15 +466,19 @@ impl RenderOnce for Card {
             .text_color(tint.unwrap_or(theme.foreground))
             .when_some(size, |this, size| this.text_size(theme.text(size)))
             .child(title);
-        let heading = match explicit {
-            false => title.into_any_element(),
-            true => div()
+        let heading = match badges.is_empty() {
+            true => title.into_any_element(),
+            false => div()
                 .flex()
                 .items_center()
                 .gap(px(3.))
                 .min_w_0()
                 .child(title)
-                .child(div().flex_none().child(ExplicitBadge::new()))
+                .children(
+                    badges
+                        .into_iter()
+                        .map(|badge| div().flex_none().child(badge)),
+                )
                 .into_any_element(),
         };
         let caption = meta.map(|meta| match bare {

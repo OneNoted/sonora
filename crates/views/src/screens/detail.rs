@@ -442,11 +442,13 @@ impl DetailView {
         });
 
         let view = self.me.clone();
+        let ai = self.detail.read(cx).album().is_some_and(|album| album.ai);
         PageHero::new("detail-hero", title)
             .pin(pin)
             .cover(cover)
             .eyebrow(eyebrow)
             .meta(strip)
+            .ai(ai)
             .actions(actions)
             .drag_start(move |event, window, cx| {
                 window.prevent_default();

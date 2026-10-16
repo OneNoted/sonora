@@ -147,6 +147,7 @@ impl SongView {
             .meta(meta)
             .actions(actions)
             .explicit(track.explicit)
+            .ai(track.ai)
             .drag_start(move |event, window, cx| {
                 window.prevent_default();
                 view.update(cx, |this, cx| {

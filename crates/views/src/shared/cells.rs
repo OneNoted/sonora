@@ -12,8 +12,8 @@ use music::{ArtistRef, Contributor};
 use router::{Destination, Link as _, navigate};
 use state::Playback;
 use ui::{
-    ActiveTheme as _, Artwork, Avatar, Cell, ExplicitBadge, InlineLink, InlineLinks, ROW_GROUP,
-    Theme, clock, tabular,
+    ActiveTheme as _, Artwork, Avatar, Badge, Cell, InlineLink, InlineLinks, ROW_GROUP, Theme,
+    clock, tabular,
 };
 
 use crate::chrome::Chrome;
@@ -359,6 +359,7 @@ pub(crate) fn title<F>(
     value: impl Into<SharedString>,
     color: Option<Hsla>,
     explicit: bool,
+    ai: bool,
     press: Option<Tap>,
     is_liked: Option<AnyElement>,
 ) -> AnyElement {
@@ -382,7 +383,10 @@ pub(crate) fn title<F>(
         .gap_1p5()
         .child(text)
         .when(explicit, |this| {
-            this.child(div().flex_none().child(ExplicitBadge::new()))
+            this.child(div().flex_none().child(Badge::explicit()))
+        })
+        .when(ai, |this| {
+            this.child(div().flex_none().child(super::ai_badge()))
         })
         .when_some(is_liked, |this, is_liked| this.child(is_liked))
         .into_any_element()

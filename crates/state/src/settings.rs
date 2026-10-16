@@ -15,8 +15,8 @@ use anyhow::{Context as _, Result};
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use gpui::WindowDecorations;
 use gpui::{
-    App, Bounds, Context, DisplayId, EventEmitter, Pixels, Size, Subscription, Task, Window,
-    WindowBounds, point, px, size,
+    App, Bounds, Context, DisplayId, EventEmitter, Pixels, SharedString, Size, Subscription, Task,
+    Window, WindowBounds, point, px, size,
 };
 use music::WritingSystem;
 use music::equalizer::{Curve, Filter, Kind, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset, Width};
@@ -445,9 +445,8 @@ enum SettingsReload {
 }
 
 /// One stored equalizer curve, in plain numbers and strings, so a hand-edited mistake drops one
-/// filter instead of making the whole file unreadable. `read_all` reads it field by field for
-/// the same reason, and `curve` validates.
-#[derive(Clone, Debug, Serialize)]
+/// filter instead of making the file unreadable. The name is empty for the profile Sonora made.
+#[derive(Clone, Debug, Default, Serialize)]
 struct Profile {
     name: String,
     preamp: StoredPreamp,
@@ -583,23 +582,40 @@ impl Profile {
         if let Some(name) = profile_field(&mut fields, "name") {
             profile.name = name;
         }
-        if let Some(preamp) = profile_field(&mut fields, "preamp") {
-            profile.preamp = preamp;
+        match profile_field(&mut fields, "preamp") {
+            Some(StoredPreamp::Decibels(db)) if !PREAMP_RANGE.contains(&db) => log::warn!(
+                "settings: equalizer preamp {db} dB is outside {PREAMP_RANGE:?}, taking auto; the stored value is replaced the next time settings are saved"
+            ),
+            Some(StoredPreamp::Word(word)) if word != "auto" => log::warn!(
+                "settings: equalizer preamp {word:?} is not a number nor auto, taking auto; the stored value is replaced the next time settings are saved"
+            ),
+            Some(preamp) => profile.preamp = preamp,
+            None => {}
         }
         let filters: Vec<serde_json::Value> =
             profile_field(&mut fields, "filters").unwrap_or_default();
         profile.filters = filters
             .into_iter()
             .filter_map(|filter| {
-                serde_json::from_value(filter)
+                serde_json::from_value::<StoredFilter>(filter)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|filter| filter.parse())
+                    .map(|filter| StoredFilter::of(&filter))
                     .map_err(|error| {
                         log::warn!(
-                            "settings: dropping an equalizer filter, gone the next time settings are saved: {error}"
+                            "settings: dropping an equalizer filter, gone the next time settings are saved: {error:#}"
                         );
                     })
                     .ok()
             })
             .collect();
+        if profile.filters.len() > MAX_FILTERS {
+            log::warn!(
+                "settings: dropping {} equalizer filters past the first {MAX_FILTERS}",
+                profile.filters.len() - MAX_FILTERS
+            );
+            profile.filters.truncate(MAX_FILTERS);
+        }
         Some(profile)
     }
 
@@ -611,52 +627,20 @@ impl Profile {
         self.filters = curve.filters().iter().map(StoredFilter::of).collect();
     }
 
-    /// The curve as stored, with every filter that is out of range dropped and logged, and a
-    /// preamp that is out of range, or not a number nor `auto`, taken as automatic.
+    /// The curve as stored. `read` already dropped, and logged, what does not make a valid
+    /// curve, so this only converts.
     fn curve(&self) -> Curve {
-        let preamp = match &self.preamp {
-            StoredPreamp::Decibels(db) if PREAMP_RANGE.contains(db) => Preamp::Manual(*db),
-            StoredPreamp::Decibels(db) => {
-                log::warn!(
-                    "settings: equalizer preamp {db} dB is outside {PREAMP_RANGE:?}, taking auto; it stays in the file until this profile is next edited"
-                );
-                Preamp::Auto
-            }
-            StoredPreamp::Word(word) => {
-                if word != "auto" {
-                    log::warn!(
-                        "settings: equalizer preamp {word:?} is not a number nor auto, taking auto; it stays in the file until this profile is next edited"
-                    );
-                }
-                Preamp::Auto
-            }
+        let preamp = match self.preamp {
+            StoredPreamp::Decibels(db) if PREAMP_RANGE.contains(&db) => Preamp::Manual(db),
+            _ => Preamp::Auto,
         };
         let filters = self
             .filters
             .iter()
-            .filter_map(|filter| {
-                filter
-                    .parse()
-                    .map_err(|error| {
-                        log::warn!(
-                            "settings: dropping an equalizer filter, which stays in the file until this profile is next edited: {error:#}"
-                        )
-                    })
-                    .ok()
-            })
+            .filter_map(|filter| filter.parse().ok())
             .take(MAX_FILTERS)
             .collect();
         Curve::new(preamp, filters).expect("the preamp and every filter were checked")
-    }
-}
-
-impl Default for Profile {
-    fn default() -> Self {
-        Self {
-            name: "Custom".to_owned(),
-            preamp: StoredPreamp::default(),
-            filters: Vec::new(),
-        }
     }
 }
 
@@ -934,9 +918,9 @@ impl AppSettings {
             Some((Ok(values), bytes)) => (values.settled(), writable, Some(bytes), None),
             Some((Err(error), _)) => {
                 log::warn!("settings: cannot parse {}: {error}", path.display());
-                (Values::default(), false, None, Some(error.line()))
+                (Values::default().settled(), false, None, Some(error.line()))
             }
-            None => (Values::default(), writable, None, None),
+            None => (Values::default().settled(), writable, None, None),
         };
 
         let state = match store.load() {
@@ -1423,6 +1407,120 @@ impl AppSettings {
     pub fn set_equalizer(&mut self, on: bool, cx: &mut Context<Self>) {
         self.values.equalizer = on;
         self.schedule_save(cx);
+    }
+
+    /// The names of the equalizer profiles in order, empty for the one Sonora made.
+    pub fn equalizer_profiles(&self) -> impl Iterator<Item = &str> {
+        self.values
+            .equalizer_profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+    }
+
+    /// Which of `equalizer_profiles` plays.
+    pub fn equalizer_profile(&self) -> usize {
+        self.values.equalizer_profile
+    }
+
+    /// The name of the profile that plays, empty for the one Sonora made.
+    pub fn equalizer_profile_name(&self) -> &str {
+        self.values
+            .equalizer_profiles
+            .get(self.values.equalizer_profile)
+            .map_or("", |profile| profile.name.as_str())
+    }
+
+    /// Makes profile `index` the one that plays. An index past the end is ignored.
+    pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.values.equalizer_profiles.len() {
+            self.values.equalizer_profile = index;
+            self.schedule_save(cx);
+        }
+    }
+
+    /// Adds a profile after the others and makes it the one that plays. Its name is `name`
+    /// trimmed, or the Default label when that is empty, numbered when another profile shows
+    /// it already.
+    pub fn add_equalizer_profile(&mut self, name: &str, curve: &Curve, cx: &mut Context<Self>) {
+        let name = match name.trim() {
+            "" => equalizer_profile_label(""),
+            name => SharedString::from(name.to_owned()),
+        };
+        let name = self.free_profile_name(&name, None);
+        let values = &mut self.values;
+        values.equalizer_profile = values.equalizer_profiles.len();
+        values.equalizer_profiles.push(Profile {
+            name,
+            ..Profile::of(curve)
+        });
+        self.schedule_save(cx);
+    }
+
+    /// Renames profile `index` to `name` trimmed, numbered when another profile shows it
+    /// already, while it is still the profile named `from`. Returns false for an empty name.
+    pub fn rename_equalizer_profile(
+        &mut self,
+        index: usize,
+        from: &str,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        let Some(profile) = self.values.equalizer_profiles.get(index) else {
+            return true;
+        };
+        if profile.name != from || equalizer_profile_label(&profile.name) == name {
+            return true;
+        }
+        let name = self.free_profile_name(name, Some(index));
+        self.values.equalizer_profiles[index].name = name;
+        self.schedule_save(cx);
+        true
+    }
+
+    /// Removes profile `index`, unless it is the only one or no longer the profile named
+    /// `name`. When it was the one playing, its neighbour plays.
+    pub fn remove_equalizer_profile(&mut self, index: usize, name: &str, cx: &mut Context<Self>) {
+        let values = &mut self.values;
+        let named = values
+            .equalizer_profiles
+            .get(index)
+            .is_some_and(|profile| profile.name == name);
+        if !named || values.equalizer_profiles.len() < 2 {
+            return;
+        }
+        values.equalizer_profiles.remove(index);
+        if index < values.equalizer_profile {
+            values.equalizer_profile -= 1;
+        }
+        values.equalizer_profile = values
+            .equalizer_profile
+            .min(values.equalizer_profiles.len() - 1);
+        self.schedule_save(cx);
+    }
+
+    /// `name`, or `name` with the lowest number after it that leaves it unlike every profile's
+    /// shown name, profile `except` left out.
+    fn free_profile_name(&self, name: &str, except: Option<usize>) -> String {
+        let taken = |candidate: &str| {
+            self.values
+                .equalizer_profiles
+                .iter()
+                .enumerate()
+                .any(|(index, profile)| {
+                    Some(index) != except && equalizer_profile_label(&profile.name) == candidate
+                })
+        };
+        (1..)
+            .map(|number| match number {
+                1 => name.to_owned(),
+                number => format!("{name} {number}"),
+            })
+            .find(|candidate| !taken(candidate))
+            .unwrap_or_else(|| name.to_owned())
     }
 
     /// Stores `curve` as the profile that plays, keeping its name.
@@ -2383,6 +2481,15 @@ impl AppSettings {
             ui::motion::apply(self.stillness(), self.pace(), cx);
         }
         cx.refresh_windows();
+    }
+}
+
+/// The name a profile shows: its stored name, or the interface's label for the empty one
+/// Sonora made.
+pub fn equalizer_profile_label(stored: &str) -> SharedString {
+    match stored.is_empty() {
+        true => i18n::t!("equalizer-profile-default"),
+        false => SharedString::from(stored.to_owned()),
     }
 }
 

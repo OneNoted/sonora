@@ -6,7 +6,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::Result;
 use gpui::{App, Context, Entity, EventEmitter, SharedString, Task};
-use music::equalizer::{Curve, Edit, EqualizerWriter};
+use music::equalizer::{Curve, Edit, EqualizerWriter, apo};
 use music::{
     MusicApi, PlaybackConfig, PlaybackEvent as BackendEvent, PlaybackEvents, PlaybackFactory,
     Player, Spectrum, Track,
@@ -89,7 +89,7 @@ use crate::queue::Queue;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AppSettings, Io, Network, Outcome, Session, SessionEvent, Target, Toast, Toasts, join,
+    AppSettings, Io, Network, Outcome, Reloaded, Session, SessionEvent, Target, Toast, Toasts, join,
 };
 
 const POSITION_INTERVAL: Duration = Duration::from_millis(500);
@@ -491,6 +491,10 @@ impl Playback {
         cx.observe(&queue, |this, _, cx| {
             this.continue_station(cx);
             this.suggest_similar(false, cx);
+        })
+        .detach();
+        cx.subscribe(&settings, |this, _, _: &Reloaded, cx| {
+            this.follow_equalizer(cx)
         })
         .detach();
 
@@ -2102,7 +2106,8 @@ impl Playback {
         cx.notify();
     }
 
-    /// Puts a whole curve in place, the way a preset pick does: the engines cross-fade to it.
+    /// Puts a whole curve in place of the playing profile's, the way a preset pick or a typed
+    /// value does: the engines cross-fade to it.
     pub fn set_equalizer_curve(&mut self, curve: Curve, cx: &mut Context<Self>) {
         self.equalizer.set_curve(curve, Edit::Replace);
         self.save_equalizer_curve(cx);
@@ -2120,6 +2125,69 @@ impl Playback {
         *filter = moved;
         self.equalizer.set_curve(curve, Edit::Glide);
         self.save_equalizer_curve(cx);
+    }
+
+    /// Plays equalizer profile `index`, cross-fading to its curve.
+    pub fn select_equalizer_profile(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| {
+            settings.select_equalizer_profile(index, cx)
+        });
+        self.follow_equalizer(cx);
+    }
+
+    /// Adds a profile named after `name` holding `curve` and plays it. `AppSettings` makes the
+    /// name unique.
+    pub fn add_equalizer_profile(&mut self, name: &str, curve: Curve, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| {
+            settings.add_equalizer_profile(name, &curve, cx)
+        });
+        self.follow_equalizer(cx);
+    }
+
+    /// Removes profile `index` while it is still the one named `name`, unless it is the only
+    /// one, and plays the profile that `AppSettings` picks in its place.
+    pub fn remove_equalizer_profile(&mut self, index: usize, name: &str, cx: &mut Context<Self>) {
+        self.settings.update(cx, |settings, cx| {
+            settings.remove_equalizer_profile(index, name, cx)
+        });
+        self.follow_equalizer(cx);
+    }
+
+    /// Reads an Equalizer APO or AutoEQ text into a new profile named after `name` and plays
+    /// it. Returns the lines it left out, or why nothing was imported.
+    pub fn import_equalizer(
+        &mut self,
+        name: &str,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Vec<apo::Skipped>, apo::Refused> {
+        let parsed = apo::parse(text)?;
+        self.add_equalizer_profile(name, parsed.curve, cx);
+        Ok(parsed.skipped)
+    }
+
+    /// The playing curve as an Equalizer APO text.
+    pub fn export_equalizer(&self) -> String {
+        apo::export(self.equalizer.curve())
+    }
+
+    /// Plays what the settings say, the equalizer on or off and the selected profile's curve,
+    /// as one replace, so the sound, the picker and the screen agree after a profile change.
+    fn follow_equalizer(&mut self, cx: &mut Context<Self>) {
+        let settings = self.settings.read(cx);
+        let (on, curve) = (settings.equalizer(), settings.equalizer_curve());
+        // Whichever change is heard goes last, so only one replace reaches the ear.
+        match on {
+            true => {
+                self.equalizer.set_curve(curve, Edit::Replace);
+                self.equalizer.set_enabled(true);
+            }
+            false => {
+                self.equalizer.set_enabled(false);
+                self.equalizer.set_curve(curve, Edit::Replace);
+            }
+        }
+        cx.notify();
     }
 
     fn save_equalizer_curve(&mut self, cx: &mut Context<Self>) {

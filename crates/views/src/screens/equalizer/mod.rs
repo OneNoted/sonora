@@ -315,6 +315,7 @@ impl EqualizerView {
     /// presets to load into it.
     fn profiles(&self, cx: &mut Context<Self>) -> AnyElement {
         let only = self.settings.read(cx).equalizer_profiles().count() < 2;
+        let (undo, redo) = self.playback.read(cx).equalizer_history();
         let preset = Preset::matching(self.playback.read(cx).equalizer_curve());
 
         let profiles = profile_picker(PROFILES, &self.popovers, &self.playback, &self.settings, cx)
@@ -364,6 +365,22 @@ impl EqualizerView {
                 action("equalizer-delete", "icons/trash-2.svg", "equalizer-delete")
                     .disabled(only)
                     .on_click(cx.listener(|this, _, _, cx| this.delete(cx))),
+            )
+            .child(
+                action("equalizer-undo", "icons/undo-2.svg", "equalizer-undo")
+                    .disabled(!undo)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.playback
+                            .update(cx, |playback, cx| playback.undo_equalizer(cx))
+                    })),
+            )
+            .child(
+                action("equalizer-redo", "icons/redo-2.svg", "equalizer-redo")
+                    .disabled(!redo)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.playback
+                            .update(cx, |playback, cx| playback.redo_equalizer(cx))
+                    })),
             )
             .child(div().flex_1())
             .child(presets)

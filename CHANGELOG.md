@@ -38,6 +38,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   output too.
 - The equalizer screen can show the signal path: the track's format, what Sonora does to the
   sound, what it sends to your device, and whether that is bit-perfect or why not.
+- Undo and redo your equalizer edits with the buttons next to the profile, or with Ctrl+Z and
+  Ctrl+Shift+Z.
 
 ### Changed
 

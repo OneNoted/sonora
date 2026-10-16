@@ -451,6 +451,20 @@ struct Profile {
     name: String,
     preamp: StoredPreamp,
     filters: Vec<StoredFilter>,
+    /// The output devices this profile plays on. A device is named by one profile at most.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    outputs: Vec<BoundOutput>,
+    /// Whether this profile plays on every output no profile names. One profile at most.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    other_outputs: bool,
+}
+
+/// An output device a profile is bound to: its stable id, and its name when it was bound, so
+/// a binding to a device that is not connected can still be shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BoundOutput {
+    pub id: String,
+    pub name: String,
 }
 
 /// `"auto"` or a number of decibels.
@@ -544,6 +558,25 @@ impl Values {
                 .push(Profile::of(&Curve::bands(&gains)));
         }
         self.equalizer_bands = Vec::new();
+        let mut bound = std::collections::HashSet::new();
+        let mut other = false;
+        for profile in &mut self.equalizer_profiles {
+            let before = profile.outputs.len();
+            profile
+                .outputs
+                .retain(|output| bound.insert(output.id.clone()));
+            if profile.outputs.len() < before {
+                log::warn!(
+                    "settings: an output named by two equalizer profiles stays with the first; the second binding is dropped the next time settings are saved"
+                );
+            }
+            if profile.other_outputs && std::mem::replace(&mut other, true) {
+                log::warn!(
+                    "settings: more than one equalizer profile plays on other outputs, keeping the first; the rest are cleared the next time settings are saved"
+                );
+                profile.other_outputs = false;
+            }
+        }
         self.equalizer_profile = self
             .equalizer_profile
             .min(self.equalizer_profiles.len() - 1);
@@ -609,6 +642,21 @@ impl Profile {
                     .ok()
             })
             .collect();
+        let outputs: Vec<serde_json::Value> =
+            profile_field(&mut fields, "outputs").unwrap_or_default();
+        profile.outputs = outputs
+            .into_iter()
+            .filter_map(|output| match serde_json::from_value::<BoundOutput>(output) {
+                Ok(output) if !output.id.is_empty() => Some(output),
+                _ => {
+                    log::warn!(
+                        "settings: dropping an equalizer profile's output that has no id and name, gone the next time settings are saved"
+                    );
+                    None
+                }
+            })
+            .collect();
+        profile.other_outputs = profile_field(&mut fields, "other_outputs").unwrap_or(false);
         if profile.filters.len() > MAX_FILTERS {
             log::warn!(
                 "settings: dropping {} equalizer filters past the first {MAX_FILTERS}",
@@ -1521,6 +1569,54 @@ impl AppSettings {
             })
             .find(|candidate| !taken(candidate))
             .unwrap_or_else(|| name.to_owned())
+    }
+
+    /// The profile that plays on output `id`: the one bound to it, else the one for other
+    /// outputs. `None` when neither is set, so the playing profile stays.
+    pub fn equalizer_profile_for_output(&self, id: &str) -> Option<usize> {
+        self.equalizer_profile_bound_to(id)
+            .or_else(|| self.equalizer_other_outputs())
+    }
+
+    /// The profile bound to output `id`, if one is.
+    pub fn equalizer_profile_bound_to(&self, id: &str) -> Option<usize> {
+        self.values
+            .equalizer_profiles
+            .iter()
+            .position(|profile| profile.outputs.iter().any(|output| output.id == id))
+    }
+
+    /// The profile that plays on outputs no profile names, if one does.
+    pub fn equalizer_other_outputs(&self) -> Option<usize> {
+        self.values
+            .equalizer_profiles
+            .iter()
+            .position(|profile| profile.other_outputs)
+    }
+
+    /// Binds `output` to profile `index`, taking it from any other, or unbinds it with `None`.
+    pub fn bind_equalizer_output(
+        &mut self,
+        output: BoundOutput,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        for profile in &mut self.values.equalizer_profiles {
+            profile.outputs.retain(|bound| bound.id != output.id);
+        }
+        if let Some(profile) = index.and_then(|index| self.values.equalizer_profiles.get_mut(index))
+        {
+            profile.outputs.push(output);
+        }
+        self.schedule_save(cx);
+    }
+
+    /// Makes profile `index` the one for outputs no profile names, or none with `None`.
+    pub fn set_equalizer_other_outputs(&mut self, index: Option<usize>, cx: &mut Context<Self>) {
+        for (at, profile) in self.values.equalizer_profiles.iter_mut().enumerate() {
+            profile.other_outputs = Some(at) == index;
+        }
+        self.schedule_save(cx);
     }
 
     /// Stores `curve` as the profile that plays, keeping its name.

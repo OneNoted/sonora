@@ -5,7 +5,7 @@ use gpui::{
 };
 use i18n::t;
 use music::equalizer::{Curve, MAX_FILTERS, PREAMP_RANGE, Preamp, Preset};
-use state::{AppSettings, Playback, Signal, Sonora, equalizer_profile_label};
+use state::{AppSettings, Outputs, Playback, Signal, Sonora, equalizer_profile_label};
 use ui::{
     ActiveTheme as _, Button, Dismiss, FORM_CONTEXT, Input, MenuItem, Modal, Picker, Popovers,
     Room, Scrollbar, Scroller, Submit, Switch, Text, heading,
@@ -19,6 +19,7 @@ use graph::Graph;
 use rows::{Row, figure};
 
 mod graph;
+mod outputs;
 mod rows;
 mod transfer;
 
@@ -38,6 +39,7 @@ pub(crate) struct EqualizerView {
     playback: Entity<Playback>,
     settings: Entity<AppSettings>,
     signal: Entity<Signal>,
+    outputs: Entity<Outputs>,
     popovers: Popovers,
     scrollbar: Entity<Scrollbar>,
     preamp: Entity<Input>,
@@ -67,6 +69,7 @@ impl EqualizerView {
     ) -> Self {
         let settings = Sonora::global(cx).settings.clone();
         let signal = Sonora::global(cx).signal.clone();
+        let outputs = Sonora::global(cx).outputs.clone();
         let id = cx.entity_id();
         let preamp = cx.new(|cx| Input::new("", cx).compact());
         let rows = (0..MAX_FILTERS).map(|_| Row::new(cx)).collect();
@@ -78,6 +81,7 @@ impl EqualizerView {
         .detach();
         cx.observe(&settings, |_, _, cx| cx.notify()).detach();
         cx.observe(&signal, |_, _, cx| cx.notify()).detach();
+        cx.observe(&outputs, |_, _, cx| cx.notify()).detach();
         let chrome = Chrome::entity(cx);
         cx.observe(&chrome, |_, _, cx| cx.notify()).detach();
 
@@ -85,6 +89,7 @@ impl EqualizerView {
             playback,
             settings,
             signal,
+            outputs,
             popovers: Popovers::default(),
             scrollbar: cx.new(|_| Scrollbar::new(ScrollHandle::new()).watching(id)),
             preamp,
@@ -463,6 +468,7 @@ impl Render for EqualizerView {
                     .child(self.header(cx))
                     .child(self.graph(room, cx))
                     .child(self.profiles(cx))
+                    .children(self.outputs(cx))
                     .child(
                         div()
                             .key_context(FORM_CONTEXT)

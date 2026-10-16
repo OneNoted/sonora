@@ -33,6 +33,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   preamp for you.
 - The equalizer screen shows the spectrum of the music behind the curve, as it is before the
   equalizer, so you can see what you are shaping. Its scale on the right reads in dBFS.
+- Give your headphones, DAC or speakers their own equalizer profile. When Sonora starts playing
+  on that output, the equalizer switches to its profile, and you can pick one for every other
+  output too.
 
 ### Changed
 

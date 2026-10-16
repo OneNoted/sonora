@@ -690,7 +690,13 @@ impl StoredFilter {
             (None, Some(octaves)) => Width::Octaves(octaves),
             (None, None) => anyhow::bail!("a filter needs a q or a width in octaves"),
         };
-        Filter::new(kind, self.frequency, self.gain, width, self.enabled)
+        Ok(Filter::new(
+            kind,
+            self.frequency,
+            self.gain,
+            width,
+            self.enabled,
+        )?)
     }
 }
 

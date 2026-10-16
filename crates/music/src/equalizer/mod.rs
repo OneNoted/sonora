@@ -2,14 +2,14 @@
 //! curve promises, and the presets. `engine` runs the filters and `shared` carries a curve from
 //! its one writer to every output.
 
+pub mod apo;
 mod design;
 mod engine;
 mod shared;
 
-use std::f64::consts::SQRT_2;
+use std::f64::consts::{LN_2, SQRT_2};
+use std::fmt;
 use std::ops::RangeInclusive;
-
-use anyhow::{Result, ensure};
 
 use design::{Biquad, Shape, phi};
 pub(crate) use engine::Engine;
@@ -124,6 +124,43 @@ impl Width {
     }
 }
 
+/// Why `Filter::new` or `Curve::new` refused a value, carrying the value, so a caller can say
+/// which one is wrong.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Invalid {
+    Frequency(f64),
+    Gain(f64),
+    Q(f64),
+    Octaves(f64),
+    /// A shelf was given a width in octaves, which only a Q describes.
+    ShelfOctaves,
+    Preamp(f64),
+    TooMany(usize),
+}
+
+impl fmt::Display for Invalid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Frequency(hz) => write!(f, "frequency {hz} Hz is outside {FREQUENCY_RANGE:?}"),
+            Self::Gain(db) => write!(f, "gain {db} dB is outside {GAIN_RANGE:?}"),
+            Self::Q(q) => write!(f, "Q {q} is outside {Q_RANGE:?}"),
+            Self::Octaves(octaves) => {
+                write!(f, "width {octaves} octaves is outside {OCTAVES_RANGE:?}")
+            }
+            Self::ShelfOctaves => write!(f, "a shelf takes a Q, not a width in octaves"),
+            Self::Preamp(db) => write!(f, "preamp {db} dB is outside {PREAMP_RANGE:?}"),
+            Self::TooMany(count) => {
+                write!(
+                    f,
+                    "a curve holds at most {MAX_FILTERS} filters, not {count}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Invalid {}
+
 /// One filter of a curve. Only `new` makes one, so a filter that exists is in range and the audio
 /// thread can trust it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -137,28 +174,27 @@ pub struct Filter {
 
 impl Filter {
     /// A filter in range, or why it is not. A shelf takes a Q, never octaves, since APO ignores
-    /// octaves on shelves and so do the files Sonora imports. A kind without a gain keeps zero.
-    pub fn new(kind: Kind, frequency: f64, gain: f64, width: Width, enabled: bool) -> Result<Self> {
-        ensure!(
-            FREQUENCY_RANGE.contains(&frequency),
-            "frequency {frequency} Hz is outside {FREQUENCY_RANGE:?}"
-        );
-        ensure!(
-            GAIN_RANGE.contains(&gain),
-            "gain {gain} dB is outside {GAIN_RANGE:?}"
-        );
+    /// octaves on shelves. A kind without a gain keeps zero, whatever gain it was given.
+    pub fn new(
+        kind: Kind,
+        frequency: f64,
+        gain: f64,
+        width: Width,
+        enabled: bool,
+    ) -> Result<Self, Invalid> {
+        if !FREQUENCY_RANGE.contains(&frequency) {
+            return Err(Invalid::Frequency(frequency));
+        }
+        if kind.has_gain() && !GAIN_RANGE.contains(&gain) {
+            return Err(Invalid::Gain(gain));
+        }
         match width {
-            Width::Q(q) => ensure!(Q_RANGE.contains(&q), "Q {q} is outside {Q_RANGE:?}"),
-            Width::Octaves(octaves) => {
-                ensure!(
-                    !kind.is_shelf(),
-                    "a shelf takes a Q, not a width in octaves"
-                );
-                ensure!(
-                    OCTAVES_RANGE.contains(&octaves),
-                    "width {octaves} octaves is outside {OCTAVES_RANGE:?}"
-                );
+            Width::Q(q) if !Q_RANGE.contains(&q) => return Err(Invalid::Q(q)),
+            Width::Octaves(_) if kind.is_shelf() => return Err(Invalid::ShelfOctaves),
+            Width::Octaves(octaves) if !OCTAVES_RANGE.contains(&octaves) => {
+                return Err(Invalid::Octaves(octaves));
             }
+            _ => {}
         }
         Ok(Self {
             kind,
@@ -192,8 +228,26 @@ impl Filter {
         self.enabled
     }
 
-    pub fn with_gain(self, gain: f64) -> Result<Self> {
+    pub fn with_gain(self, gain: f64) -> Result<Self, Invalid> {
         Self::new(self.kind, self.frequency, gain, self.width, self.enabled)
+    }
+
+    pub fn with_enabled(self, enabled: bool) -> Self {
+        Self { enabled, ..self }
+    }
+
+    /// The filter as another kind, keeping what still applies. A shelf takes only a Q, so a
+    /// width in octaves becomes the Q it means for an analog filter, clamped into range.
+    pub fn with_kind(self, kind: Kind) -> Self {
+        let width = match (kind.is_shelf(), self.width) {
+            (true, Width::Octaves(octaves)) => {
+                let q = 1. / (2. * (LN_2 / 2. * octaves).sinh());
+                Width::Q(q.clamp(*Q_RANGE.start(), *Q_RANGE.end()))
+            }
+            (_, width) => width,
+        };
+        Self::new(kind, self.frequency, self.gain, width, self.enabled)
+            .expect("a filter in range stays in range as another kind")
     }
 
     /// Whether this filter is the one a graphic band of `gain` decibels at `frequency` means.
@@ -222,17 +276,14 @@ pub struct Curve {
 }
 
 impl Curve {
-    pub fn new(preamp: Preamp, filters: Vec<Filter>) -> Result<Self> {
-        ensure!(
-            filters.len() <= MAX_FILTERS,
-            "a curve holds at most {MAX_FILTERS} filters, not {}",
-            filters.len()
-        );
-        if let Preamp::Manual(db) = preamp {
-            ensure!(
-                PREAMP_RANGE.contains(&db),
-                "preamp {db} dB is outside {PREAMP_RANGE:?}"
-            );
+    pub fn new(preamp: Preamp, filters: Vec<Filter>) -> Result<Self, Invalid> {
+        if filters.len() > MAX_FILTERS {
+            return Err(Invalid::TooMany(filters.len()));
+        }
+        if let Preamp::Manual(db) = preamp
+            && !PREAMP_RANGE.contains(&db)
+        {
+            return Err(Invalid::Preamp(db));
         }
         Ok(Self { preamp, filters })
     }
